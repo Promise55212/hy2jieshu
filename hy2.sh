@@ -2771,7 +2771,7 @@ issue_or_renew_cert_zerossl() {
       hy2_die "ZeroSSL 签发失败：$domain"
     fi
   fi
-  "$acme_sh" --install-cert -d "$domain"     --key-file "${cert_dir}/privkey.pem"     --fullchain-file "${cert_dir}/fullchain.pem"     --reloadcmd "$HY2_RENEW_HOOK"
+  HY2_MAIN_DEPLOYING=1 "$acme_sh" --install-cert -d "$domain"     --key-file "${cert_dir}/privkey.pem"     --fullchain-file "${cert_dir}/fullchain.pem"     --reloadcmd "$HY2_RENEW_HOOK"
 
   chmod 600 "${cert_dir}/privkey.pem" "${cert_dir}/fullchain.pem"
 }
@@ -2947,11 +2947,13 @@ restart_temp_preserve_state() {
 }
 
 # acme.sh invokes the reload command immediately during --install-cert.
-# On first deployment, main metadata and the service are created only afterward.
-# Keep the reload hook registered so later certificate renewals still restart HY2.
-if [[ ! -s "$HY2_MAIN_STATE_FILE" ]]; then
-  hy2_log acme.log "[renew-hook] first install: main state not yet created; deferring reload"
-  echo "ℹ️  HY2 首次安装：延后证书重载，由主节点安装流程负责启动服务"
+# Retained metadata can outlive an uninstalled service. Only this deployment's
+# temporary environment permits deferring that missing-unit reload; --reloadcmd
+# itself stays unchanged, so unattended renewal still fails on a missing unit.
+if [[ ! -s "$HY2_MAIN_STATE_FILE" ]] \
+  || { [[ "${HY2_MAIN_DEPLOYING:-0}" == "1" ]] && [[ ! -f /etc/systemd/system/hy2.service ]]; }; then
+  hy2_log acme.log "[renew-hook] main deployment: state or unit not yet created; deferring reload"
+  echo "ℹ️  HY2 主节点部署：延后证书重载，由主节点安装流程负责启动服务"
   exit 0
 fi
 
@@ -3693,9 +3695,21 @@ UNIT_NAME="${TAG}.service"
 FROM_STOP_POST=0
 [[ "$MODE" == "--from-stop-post" ]] && FROM_STOP_POST=1
 STOPPOST_BYPASS_FILE="${HY2_LOCK_DIR}/stoppost-bypass.${TAG}"
+STOPPOST_PRESERVE_FILE="${HY2_LOCK_DIR}/stoppost-preserve.${TAG}"
 SKIP_LOCK=0
 
 hy2_ensure_runtime_dirs
+
+# A watchdog emergency stop must preserve even expired/corrupt metadata.
+# The root-owned runtime marker is valid only while its initiating process
+# lives; a stale marker cannot permanently bypass normal expiry cleanup.
+if (( FROM_STOP_POST == 1 )) && [[ -f "$STOPPOST_PRESERVE_FILE" ]]; then
+  PRESERVE_PID="$(cat "$STOPPOST_PRESERVE_FILE" 2>/dev/null || true)"
+  if [[ "$PRESERVE_PID" =~ ^[0-9]+$ ]] && kill -0 "$PRESERVE_PID" 2>/dev/null; then
+    exit 0
+  fi
+  rm -f "$STOPPOST_PRESERVE_FILE"
+fi
 
 # Read metadata first (plain file reads need no lock) so the common
 # "not expired -> preserve" decision is made BEFORE any lock is taken.  This
@@ -3799,6 +3813,7 @@ fi
 
 rm -f "$STOPPOST_BYPASS_FILE"
 rm -f "$CFG" "$META" "$UNIT_FILE" "$URL_FILE"
+rm -f -- "/var/lib/hy2/uninstalled-units/${TAG}.service"
 if [[ "$LANDING" == "nat" && -n "$WG_IF" && "$TABLE_ID" =~ ^[0-9]+$ \
       && "$OIF_RULE_PRIORITY" =~ ^[0-9]+$ ]]; then
   KEEP_OIF_RULE=0
@@ -3897,6 +3912,12 @@ for tag in "${TAGS[@]}"; do
     continue
   fi
 
+  # A keep-data uninstall is explicitly recoverable; do not turn a failed
+  # reinstall attempt into deletion of a still-valid retained node.
+  if [[ -e "/var/lib/hy2/uninstalled-units/${tag}.service" \
+        || -L "/var/lib/hy2/uninstalled-units/${tag}.service" ]]; then
+    continue
+  fi
   if [[ ! -f "$cfg" || ! -f "$unit" ]]; then
     if ! systemctl is-active --quiet "${tag}.service" 2>/dev/null; then
       FORCE=1 HY2_TEMP_LOCK_HELD=1 /usr/local/sbin/hy2_cleanup_one.sh "$tag" >/dev/null 2>&1 || true
@@ -3917,13 +3938,114 @@ source /usr/local/lib/hy2/common.sh
 hy2_ensure_runtime_dirs
 
 rc=0
+PRESERVED_DIR=/var/lib/hy2/uninstalled-units
+declare -a PRESERVED_TAGS=() PRESERVED_NEW_STARTS=() PRESERVED_SYNC=()
+preserved_start_rollback() {
+  local status=$? tag marker
+  (( status != 0 )) || return 0
+  # Installer rollback must not leave a newly started retained listener using
+  # helpers which that outer transaction may remove. Preserve every marker
+  # and metadata file until the entire recovery batch has succeeded.
+  for tag in "${PRESERVED_NEW_STARTS[@]}"; do
+    marker="${HY2_LOCK_DIR}/stoppost-preserve.${tag}"
+    printf '%s\n' "$$" >"$marker"
+    timeout 30 systemctl stop "${tag}.service" >/dev/null 2>&1 \
+      || systemctl kill --kill-who=all --signal=KILL "${tag}.service" >/dev/null 2>&1 || true
+    rm -f -- "$marker"
+  done
+}
+trap preserved_start_rollback EXIT
+
+preserved_secure() {
+  local path="$1" mode
+  [[ ! -L "$path" && "$(stat -c %u "$path" 2>/dev/null)" == "0" ]] || return 1
+  mode="$(stat -c %a "$path" 2>/dev/null)"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( ((8#$mode) & 8#022) == 0 ))
+}
+
+# Only explicit keep-data uninstall backups opt into this recovery. Ordinary
+# missing-unit GC behavior stays unchanged. Never execute backup file contents.
+if [[ -e "$PRESERVED_DIR" || -L "$PRESERVED_DIR" ]]; then
+  [[ -d "$PRESERVED_DIR" ]] && preserved_secure "$PRESERVED_DIR" \
+    || { echo "❌ 不安全的卸载服务备份目录；保留数据待修复" >&2; exit 1; }
+  if [[ "${HY2_TEMP_LOCK_HELD:-0}" != "1" ]]; then
+    hy2_acquire_lock_fd 7 "${HY2_LOCK_DIR}/temp.lock" 120 "temp 锁繁忙"
+    export HY2_TEMP_LOCK_HELD=1
+  fi
+  for saved in "$PRESERVED_DIR"/*.service; do
+    [[ -e "$saved" || -L "$saved" ]] || continue
+    tag="${saved##*/}"
+    tag="${tag%.service}"
+    hy2_is_valid_temp_tag "$tag" && preserved_secure "$saved" \
+      || { echo "❌ 非法或不安全的卸载服务备份；保留数据待修复" >&2; exit 1; }
+    meta="$(hy2_temp_meta_file "$tag")"
+    cfg="$(hy2_temp_cfg_file "$tag")"
+    unit="$(hy2_temp_unit_file "$tag")"
+    [[ -s "$meta" && -s "$cfg" ]] && preserved_secure "$meta" && preserved_secure "$cfg" \
+      || { echo "❌ ${tag} 的保留元数据/配置缺失或不安全" >&2; exit 1; }
+    [[ "$(hy2_meta_get "$meta" TAG)" == "$tag" ]] \
+      || { echo "❌ ${tag} 的保留元数据归属不符" >&2; exit 1; }
+    expire="$(hy2_meta_get "$meta" EXPIRE_EPOCH)"
+    [[ "$expire" =~ ^[0-9]{1,12}$ ]] \
+      || { echo "❌ ${tag} 的保留到期时间无效" >&2; exit 1; }
+    # Already expired nodes follow normal cleanup, including the backup marker.
+    (( 10#$expire > $(date +%s) )) || continue
+    landing="$(hy2_meta_get "$meta" LANDING)"
+    wg_if="$(hy2_meta_get "$meta" WG_IF 2>/dev/null || true)"
+    [[ "$landing" == local || "$landing" == nat ]] \
+      || { echo "❌ ${tag} 的保留落地类型无效" >&2; exit 1; }
+    if [[ "$landing" == nat ]]; then
+      [[ "$wg_if" =~ ^[A-Za-z0-9_.-]{1,15}$ && "$wg_if" != . && "$wg_if" != .. ]] \
+        || { echo "❌ ${tag} 的保留 WireGuard 接口无效" >&2; exit 1; }
+    fi
+    [[ ! -L "$unit" ]] \
+      || { echo "❌ ${tag} 的服务路径是符号链接，拒绝覆盖" >&2; exit 1; }
+    unit_tmp="$(mktemp "${unit}.restore.XXXXXX")"
+    if ! hy2_temp_unit_text "$tag" "$cfg" "$landing" "$wg_if" >"$unit_tmp" \
+      || ! chmod 644 "$unit_tmp" || ! mv -f -- "$unit_tmp" "$unit"; then
+      rm -f -- "$unit_tmp"
+      echo "❌ ${tag} 的保留服务恢复失败，备份保留供重试" >&2
+      exit 1
+    fi
+    PRESERVED_TAGS+=("$tag")
+  done
+fi
 
 /usr/local/sbin/hy2_gc.sh || rc=1
 /usr/local/sbin/pq_restore_all.sh || rc=1
 /usr/local/sbin/iplimit_restore_all.sh || rc=1
 
-systemctl daemon-reload >/dev/null 2>&1 || true
+if (( ${#PRESERVED_TAGS[@]} > 0 )) \
+  && [[ -e /var/lib/hy2/manual-guard/state.json || -L /var/lib/hy2/manual-guard/state.json ]]; then
+  if [[ ! -x /usr/local/sbin/hy2-guard ]] || ! /usr/local/sbin/hy2-guard restore \
+    || ! systemctl enable hy2-manual-guard.service >/dev/null \
+    || ! systemctl start hy2-manual-guard.service; then
+    echo "❌ 保留的手工防火墙恢复失败；不启动保留节点，备份供重试" >&2
+    rc=1
+  fi
+fi
+(( rc == 0 )) || exit "$rc"
+systemctl daemon-reload >/dev/null 2>&1 || exit 1
 
+for tag in "${PRESERVED_TAGS[@]}"; do
+  systemctl enable "${tag}.service" >/dev/null || exit 1
+  # On boot this script is itself hy2-managed-restore.service; waiting for a
+  # temp unit ordered After=restore would deadlock. Keep the marker until a
+  # later successful synchronous recovery in that case.
+  if [[ "$(systemctl show -p ActiveState --value hy2-managed-restore.service 2>/dev/null)" == activating ]]; then
+    systemctl start --no-block "${tag}.service" || exit 1
+  else
+    if ! systemctl is-active --quiet "${tag}.service"; then
+      PRESERVED_NEW_STARTS+=("$tag")
+    fi
+    systemctl start "${tag}.service" && systemctl is-active --quiet "${tag}.service" \
+      || { echo "❌ ${tag} 启动失败，保留备份和元数据供重试" >&2; exit 1; }
+    PRESERVED_SYNC+=("$tag")
+  fi
+done
+for tag in "${PRESERVED_SYNC[@]}"; do
+  rm -f -- "$PRESERVED_DIR/${tag}.service"
+done
 exit "$rc"
 EOF
   chmod 755 "${HY2_SBIN_DIR}/hy2_restore_all.sh"
@@ -4126,6 +4248,15 @@ printf '%s\n' '--------------------------------------------------'
 check_secure_file /etc/default/hy2-main "主配置" 0
 check_secure_file "$HY2_MAIN_PASSWORD_FILE" "主节点密码" 0
 check_secure_file /root/hy2_main_url.txt "主节点链接" 0
+if [[ -e /var/lib/hy2/manual-guard/state.json || -L /var/lib/hy2/manual-guard/state.json ]]; then
+  check_secure_file /var/lib/hy2/manual-guard/state.json "手工防火墙状态" 0
+  if [[ -x /usr/local/sbin/hy2-guard ]] \
+    && timeout 15 /usr/local/sbin/hy2-guard audit >/dev/null 2>&1; then
+    ok "手工暂停/黑名单规则与持久状态一致"
+  else
+    bad "手工暂停/黑名单防护异常；检查 hy2-guard restore 后再运行 hy2-guard audit"
+  fi
+fi
 if [[ -f /etc/wireguard/wg-nat.env ]]; then
   check_secure_file /etc/wireguard/wg-nat.key "WireGuard 私钥" 0
 fi
@@ -4780,14 +4911,48 @@ wd_node_healthy() {
 }
 
 stop_temp_listener_failclosed() {
-  local tag="$1" bypass="${HY2_LOCK_DIR}/stoppost-bypass.${tag}"
+  local tag="$1" preserve="${2:-0}" bypass preserve_file
+  bypass="${HY2_LOCK_DIR}/stoppost-bypass.${tag}"
+  preserve_file="${HY2_LOCK_DIR}/stoppost-preserve.${tag}"
   hy2_is_valid_temp_tag "$tag" || return 1
   printf '%s\n' "$$" >"$bypass"
+  if [[ "$preserve" == 1 ]]; then printf '%s\n' "$$" >"$preserve_file"; fi
   if ! timeout 20 systemctl stop "${tag}.service" >/dev/null 2>&1; then
     systemctl kill --kill-who=all --signal=KILL "${tag}.service" >/dev/null 2>&1 || true
   fi
   rm -f "$bypass"
+  if [[ "$preserve" == 1 ]]; then rm -f "$preserve_file"; fi
 }
+
+wd_manual_guard_ready() {
+  local guard=/usr/local/sbin/hy2-guard state=/var/lib/hy2/manual-guard/state.json tag
+  # Optional module: no persisted policy means no guard dependency. Existing
+  # state with a missing/broken CLI must not be silently treated as healthy.
+  [[ -e "$state" || -L "$state" ]] || return 0
+  if [[ -x "$guard" ]] && timeout 15 "$guard" audit >/dev/null 2>&1; then return 0; fi
+  echo "HY2_WATCHDOG_MANUAL_GUARD_REPAIR: restoring persisted pauses/bans" >&2
+  if [[ -x "$guard" ]] && timeout 15 "$guard" restore \
+    && timeout 15 "$guard" audit; then
+    echo "HY2_WATCHDOG_MANUAL_GUARD_RECOVERED" >&2
+    return 0
+  fi
+  # The failed state may be corrupt, so its affected ports cannot be trusted.
+  # Stop every managed listener and leave all node metadata untouched.
+  echo "HY2_WATCHDOG_MANUAL_GUARD_FAILED: stopping managed listeners; metadata retained" >&2
+  if ! timeout 20 systemctl stop hy2.service >/dev/null 2>&1; then
+    systemctl kill --kill-who=all --signal=KILL hy2.service >/dev/null 2>&1 || true
+  fi
+  while IFS= read -r tag; do
+    hy2_is_valid_temp_tag "$tag" || continue
+    stop_temp_listener_failclosed "$tag" 1 || true
+  done < <(hy2_collect_temp_tags)
+  echo "Restore guard successfully, audit it, then start hy2.service manually; temporary nodes retry on a later watchdog pass." >&2
+  return 1
+}
+
+# Do this before expiry cleanup or any listener recovery. A failed optional
+# guard must never be followed by restarting a listener without its policies.
+wd_manual_guard_ready || exit 1
 
 for meta in "$HY2_QUOTA_STATE_DIR"/*.env; do
   [[ -f "$meta" ]] || continue

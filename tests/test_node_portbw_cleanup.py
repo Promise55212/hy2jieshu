@@ -40,6 +40,7 @@ rm -f -- "$TEST_ROOT/policies/ports/$2.json"
             program.chmod(0o755)
         script = emitted('hy2_cleanup_one.sh')
         script = re.sub(r'^source /usr/local/lib/hy2/.*$', '', script, flags=re.M)
+        script = script.replace('/var/lib/hy2/uninstalled-units', (root / 'uninstalled-units').as_posix())
         script = script.replace('/var/lib/portbw', (root / 'policies').as_posix())
         script = script.replace('/usr/local/sbin/portbw', program.as_posix())
         script = script.replace('/var/lib/hy2/manual-guard/state.json', (root / 'no-guard.json').as_posix())

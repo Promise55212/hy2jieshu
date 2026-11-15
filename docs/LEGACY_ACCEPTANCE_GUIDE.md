@@ -118,4 +118,3 @@ python3 /root/hy2_batch_acceptance.py --recovery
 10. 清空 HY2 nftables 表后，watchdog 能恢复或停止节点
 11. HY2 VPS 与 NAT 机重启后，Peer、路由、配额和临时节点状态恢复
 12. 模拟证书续期后，主节点和未到期临时节点正常重载
-

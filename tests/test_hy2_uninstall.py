@@ -10,10 +10,26 @@ SCRIPT = ROOT / 'hy2-uninstall.sh'
 
 
 class UninstallSafetyTest(unittest.TestCase):
+    def private_directory_compatibility(self):
+        # NTFS cannot express chmod 700 directories through Git Bash. Exercise
+        # the same copy/rename/failure path there; Linux checks the real modes.
+        if os.name == 'nt':
+            return '''install() {
+  if [[ "$1" == -d && "$2" == -m && "$3" == 700 ]]; then
+    shift 3; mkdir -p "$@"
+  else
+    command install "$@"
+  fi
+}
+'''
+        return ''
+
     def bash(self, body, *args):
         return subprocess.run(['bash', '-c', 'source "$1"\n' + body,
-                               'test', str(SCRIPT), *map(str, args)],
-                              capture_output=True, text=True, timeout=15)
+                               'test', SCRIPT.as_posix(),
+                               *(arg.as_posix() if isinstance(arg, Path) else str(arg)
+                                 for arg in args)],
+                              capture_output=True, text=True, encoding='utf-8', timeout=15)
 
     def test_syntax(self):
         p = subprocess.run(['bash', '-n', str(SCRIPT)], capture_output=True,
@@ -140,6 +156,68 @@ remove_owned_tables
     def test_no_bandwidth_record_does_not_require_installed_portbw(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = self.bash('remove_node_bandwidth 40020 "$2" /nonexistent/portbw', tmp)
+            self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_nonpurge_backup_preserves_original_unit_and_restricts_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'hy2-temp-retained.service'
+            original = '[Unit]\nDescription=Retained temporary node\n'
+            source.write_text(original)
+            store = root / 'uninstalled-units'
+            p = self.bash(self.private_directory_compatibility()
+                          + 'chown() { :; }\nbackup_temp_unit "$2" "$3"', source, store)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(source.read_text(), original)
+            backup = store / source.name
+            self.assertEqual(backup.read_text(), original)
+            self.assertEqual([path.name for path in store.iterdir()], [source.name])
+            if os.name != 'nt':
+                self.assertEqual(store.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+
+    def test_backup_failure_prevents_original_unit_deletion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'hy2-temp-retained.service'
+            source.write_text('[Unit]\nDescription=Do not delete on disk error\n')
+            store = root / 'uninstalled-units'
+            p = self.bash(self.private_directory_compatibility() + '''
+chown() { :; }
+mv() { return 1; }
+backup_temp_unit "$2" "$3"
+rm -f -- "$2"
+''', source, store)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertTrue(source.exists())
+            self.assertFalse((store / source.name).exists())
+            self.assertEqual(list(store.iterdir()), [])
+
+    def test_backup_refuses_unrelated_unit_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'ssh.service'
+            source.write_text('[Unit]\nDescription=Unrelated service\n')
+            p = self.bash('backup_temp_unit "$2" "$3"', source, root / 'backups')
+            self.assertNotEqual(p.returncode, 0)
+            self.assertTrue(source.exists())
+            self.assertFalse((root / 'backups').exists())
+
+    def test_nonpurge_retains_nat_and_guard_dependencies_but_purge_removes_them(self):
+        tools = ('/usr/local/sbin/hy2_nat_preflight.sh',
+                 '/usr/local/sbin/hy2-guard',
+                 '/etc/systemd/system/hy2-manual-guard.service')
+        for path in tools:
+            for purge in ('0', '1'):
+                with self.subTest(path=path, purge=purge):
+                    p = self.bash('if retain_restore_tool "$2" "$3"; then echo KEEP; else echo REMOVE; fi', path, purge)
+                    self.assertEqual(p.returncode, 0, p.stderr)
+                    self.assertEqual(p.stdout.strip(), 'KEEP' if purge == '0' else 'REMOVE')
+        # Keeping a NAT dependency does not silently keep unrelated tools or
+        # the optional NAT creator, which can be regenerated after reinstall.
+        for path in ('/usr/local/sbin/hy2_mktemp_nat.sh', '/usr/local/sbin/hy2-abuse',
+                     '/usr/local/sbin/hy2_nat_preflight.sh.old'):
+            p = self.bash('if retain_restore_tool "$2" 0; then exit 1; fi', path)
             self.assertEqual(p.returncode, 0, p.stderr)
 
 

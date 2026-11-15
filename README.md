@@ -478,7 +478,7 @@ portbw auto set 40000 --up 40 --down 40 --trigger 100 --after 45s --auto-up 18 -
 <details>
 <summary>自动限速参数、恢复规则与关闭自动模式</summary>
 
-上传 / 下载分别触发。100% 指本方向 40 Mbps；85% 只用于采样连续性判断，整段窗口仍需达标。保护至少 120 秒，高负载会续期；恢复后零冷却，再次触发仍需重新满足 45 秒条件。手动 set/up/down 会关闭自动模式，删除节点不会自动删除独立限速规则。仅覆盖本机端口，不覆盖任意 WG/NAT 转发；完整双向限速使用默认 nft+tc 模式。
+上传 / 下载分别触发。100% 指本方向 40 Mbps；85% 只用于采样连续性判断，整段窗口仍需达标。保护至少 120 秒，高负载会续期；恢复后零冷却，再次触发仍需重新满足 45 秒条件。手动 set/up/down 会关闭自动模式。节点删除或到期会清理对应端口的限速记录，失败时保留节点元数据供重试。限速只覆盖本机端口，不覆盖任意 WG/NAT 转发；完整双向限速使用默认 nft+tc 模式。
 
 同一端口的 TCP/UDP、IPv4/IPv6 共用上传额度，并共用另一份下载额度，不是每种协议各分一份。静态限速中 `0` 表示该方向不限速。`--nft-only` 不支持下载限速。
 
@@ -533,7 +533,7 @@ portbw del 40001        # 仅取消端口限速，不删除 HY2 节点
 
 **HY2-NAT 真机测速（2026-11-04）：** `portbw set 40020 10 10`、`portbw report`、`portbw audit` 均正常，用户报告 v2rayN 测速通过，最后 `portbw del 40020` 正常取消。**这是旧主机对特定 HY2 链路的记录；通用自动触发与恢复复用同源码 `jieshu` 验收，不把旧主机当作当前 VPS。**
 
-**节点回收：** HY2 临时节点到期或删除时，会调用 `portbw del` 清理该节点端口已保存的独立限速策略；失败则保留节点元数据，报告错误供重试，避免新节点继承旧限速。不会清理其他端口或卸载共享 portbw。对 WG-NAT 节点按 HY2 VPS 的 UDP 40020 限速，不是 NAT 出口机的 WG 51820。
+**节点回收：** HY2 临时节点到期或删除时，会调用共享 `portbw del`，只删除该节点端口已保存的策略。发现对应记录但 CLI 缺失或删除失败时，保留节点元数据并报告失败，修复后重试；不清理其他端口、不卸载共享 portbw。WG-NAT 使用 HY2 VPS 上节点入口的端口策略，同数字端口的 TCP + UDP 共用额度；不要把 NAT 出口机的 WG `51820` 当作单个 HY2 节点限速端口。
 
 <a id="troubleshooting"></a>
 ## 四、故障排查
@@ -587,6 +587,15 @@ journalctl -u wg-quick@wg-nat.service -n 50 --no-pager
 ```bash
 systemctl start hy2-managed-watchdog.service
 ```
+
+手工 guard 状态存在时，看门狗会先 audit、必要时 restore，再次 audit。缺少工具或仍无法恢复时，主节点与临时节点都停止，元数据保留，避免丢失暂停/黑名单后继续监听。修复工具或持久状态后，先恢复并核查防护，再启动主节点和临时节点恢复任务：
+
+```bash
+hy2-guard restore && hy2-guard audit && systemctl start hy2.service
+systemctl start hy2-managed-watchdog.service
+```
+
+仅因手工 guard 故障被安全停止的主节点需要上述显式启动；不要在防护未恢复时直接绕过检查启动服务。
 
 <a id="service-management"></a>
 
@@ -711,7 +720,7 @@ systemctl is-active hy2-manual-guard.service
 
 <summary>删除指定 HY2 临时节点 / 清空全部临时节点</summary>
 
-删除临时节点会使对应链接失效并清理其配额/IP 规则与本端口的手工暂停/黑名单；不会删除 HY2 主节点或 WireGuard。独立 portbw 策略仍须单独管理。清理前先运行 `hy2_audit.sh` 确认完整 TAG。
+删除临时节点会使对应链接失效，清理其配额/IP 规则、本端口的手工暂停/黑名单及已保存的 portbw 策略；不会删除 HY2 主节点、WireGuard 或其他端口策略。限速 CLI 缺失或删除失败时会报错并保留节点元数据，修复后重试。清理前先运行 `hy2_audit.sh` 确认完整 TAG。
 
 #### 强制删除一个临时节点
 
@@ -728,6 +737,8 @@ FORCE=1 hy2_cleanup_one.sh hy2-temp-节点名称
 ```bash
 hy2_clear_all.sh
 ```
+
+批量清理会尝试各个受管临时节点，任一节点未清理成功时返回非零；不能把有残留的批次当作清空成功。
 
 </details>
 
@@ -747,7 +758,7 @@ bash -n /root/hy2-uninstall.sh && bash /root/hy2-uninstall.sh
 默认只预览。确认备份已保存后，下面两种方式选择一种：
 
 ```bash
-# 停止并移除 HY2 管理服务、命令与专用防火墙，保留运行数据和证书
+# 停止并移除 HY2 运行服务及大部分工具，保留数据、证书和 guard 恢复工具
 bash /root/hy2-uninstall.sh --yes
 ```
 
@@ -757,6 +768,8 @@ bash /root/hy2-uninstall.sh --yes --purge --remove-core
 ```
 
 卸载会使 HY2 链接停止工作。WireGuard、NAT Peer、portbw 程序、acme.sh 账户与 SSH 配置分别管理，不随 HY2 卸载删除；保留数据卸载时也保留对应端口限速，`--purge` 会清理 HY2 主节点及临时节点元数据所列端口的 portbw 策略，其他端口保留。脚本对共用名称的配额服务和命令进行 HY2 归属检查，拒绝删除其他应用的组件。
+
+保留数据卸载将临时 unit 备份到 root 私有的 `/var/lib/hy2/uninstalled-units/`，备份文件权限为 600；同时保留 `hy2-guard` 命令、停止/禁用的 guard unit 和 `/usr/local/sbin/hy2_nat_preflight.sh`，作为普通 / NAT 节点恢复工具，专用 nft 表会移除。重新安装管理器时，在 GC 之前恢复合法未到期 unit，先恢复 guard 规则与服务，确认防护后才启动保留节点。普通与 NAT 两节点的完整保留数据卸载/重装已在[本轮报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)通过外部客户端复测；前两次失败及修复过程仍保留。
 
 `--purge` 删除的数据无法由 GitHub 恢复；`/root/.acme.sh` 中的账户及 ACME 证书副本仍保留，不能将此命令当作所有密钥的彻底销毁。保留数据卸载后重新安装也必须检查旧节点有效期和防护，不能将它当作空白机直接运行首次安装前置检查。
 
@@ -1289,7 +1302,7 @@ bash /root/portbw-install.sh rollback
 - **HY2 临时节点 Watchdog 72 小时宽限：** 第三次连续恢复失败后，才开始一次持久化的 72 小时宽限期。系统重启/手工重启服务不重置 `WATCHDOG_GRACE_START_EPOCH`；只有服务、端口监听、全部配额/IP 防护，且 NAT 节点的 WG 路由/握手均被重新核实为健康，才清空失败次数和宽限计时。
 - **宽限期间仍然 fail-closed：** 若缺失 nft 防护，停掉监听并保留节点；若 WG 无有效握手，恢复失败的 NAT 节点不允许继续监听，不能改走 VPS 公网。
 - **到期处理：** 自然 TTL 到期按原规则正常删除；72 小时宽限结束后，只有再次恢复失败且本次启动已稳定至少 300 秒，才执行最终节点清理。这与 `jieshu` 的持久宽限理念一致，但**尚需在专用临时节点上做跨重启/超过 72h 或模拟时钟的验收**，GitHub CI 不等于真实故障链路。
-- `portbw` 独立于 HY2 临时节点生命周期；删除节点不自动删限速。
+- `portbw` 是共享组件；HY2 节点删除/到期只清理对应端口策略，失败保留元数据供重试，其他端口不受影响。
 - `nat.sh init/add/del` 可能重启 NAT 机 WG，影响其他 Peer。
 
 </details>
@@ -1299,7 +1312,7 @@ bash /root/portbw-install.sh rollback
 
 **当前新机与旧证据分开记录。** 本轮为 2026-11-15 全新 Debian 13 VPS，实际测试、修复、未完成项见 [TASK_PROGRESS.md](TASK_PROGRESS.md) 及其中链接的当次验收报告。下文 2026-11-04 / 05 的结果均来自旧测试机，不自动计入本轮通过。
 
-**当前阶段实测：** [2026-11-15 新机报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)记录正式 TLS、Windows 官方客户端主/临时节点、双向内容 SHA256、UDP echo、真实配额耗尽及恢复、来源 IP 槽位、TCP + UDP 暂停/来源封禁、portbw 静态限速集成和真实整机重启通过；重启前后 daily 与配额保存字节精确一致。通用自动降速算法复用 `jieshu` 同源码验收。Watchdog 故障注入、删除复用、保护失效恢复、卸载重装和最终回归仍在继续；未提供外部 NAT，IPv6、实际 72 小时/30 天、真实续证和异常断电未测。
+**当前阶段实测：** [2026-11-15 新机报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)记录正式 TLS、Windows 官方客户端主/临时节点、双向 SHA256、UDP、真实配额耗尽/恢复、IP 槽位、TCP + UDP 暂停/来源 IP 及 `/24` 封禁、静态限速、整机重启及精确字节持久化通过；Watchdog 故障恢复、保护失效时安全停止、删除/端口复用及 90 秒自然到期也已实测。当前新 VPS 的真实 NAT 出口、双向 TCP / UDP、停 WG 阻断及握手后恢复通过，生产 NAT 未重启，临时资源待收尾清理。普通与 NAT 两节点保留数据卸载/重装、注册的证书 reload hook 调用及外部客户端复测通过；通用自动降速算法复用 `jieshu` 同源码证据。第二次整机重启已保留 NAT 精确统计与配额字节，握手前拒绝符合预期，握手就绪后服务/出口检查通过，最后一轮外部业务仍待结果；purge/重装和最终回归正在继续。IPv6、实际 72 小时/30 天、真实 CA 续证和异常断电未测。
 
 | 状态 | 判定依据 |
 |---|---|
@@ -1322,8 +1335,8 @@ bash /root/portbw-install.sh rollback
 
 | 功能 | `hy2jieshu` 当前状态 | 推荐处理 |
 |---|---|---|
-| Hysteria 2 主/临时节点、配额、IP 限制、到期管理 | 已实现；旧主机主要路径有证据，本轮另记 | 维持稳定 |
-| WG-NAT 出口、防泄漏与 VPS 重启恢复 | 已有；旧主机实测 | 不盲目覆盖 WG 脚本 |
+| Hysteria 2 主/临时节点、配额、IP 限制、到期管理 | 当前新机真实客户端、配额耗尽/恢复、来源槽位、删除复用与自然到期通过；普通/NAT保留数据重装通过 | purge/重装与最终回归仍在继续 |
+| WG-NAT 出口、防泄漏与恢复 | 当前新 VPS / 新 Peer 外部双向 TCP 与 UDP、停 WG 断流及握手后恢复通过；本轮生产 NAT 未重启 | 继续使用原 NAT 管理器，收尾清理临时 Peer；NAT 机重启未测 |
 | 按端口每日流量历史统计与导出 | **已移植并真机验证**：HY2 UDP 双向字节、原配额一致、正常重启前后保留且 0 字节重复计数 | 剩余：跨北京时间午夜、突然断电、30 天裁剪及端口复用 |
 | 静态端口限速、持续流量高峰自动降速（`portbw`） | **两个仓库的 `portbw.py` / `portbw-install.sh` Git Blob SHA 完全相同**；`jieshu` README 记录 Helan 实际上传/下载触发与恢复，HY2 本机通过静态测速和自动策略空闲生命周期 | **直接继承已验收的通用内核限速算法**；额外 HY2 全链路高负载仅作可选集成测试，不再强制重复 |
 | 端口暂停、来源 IP/CIDR 黑名单 | **真机通过**：端口暂停/恢复、来源 IP `/32` 和 CIDR `/24` 封禁/解封；独立 nft 表正常重启持久化，HY2/WG 均正常 | 尚待补充异常断电、过期端口生命周期等边界测试 |
@@ -1331,7 +1344,7 @@ bash /root/portbw-install.sh rollback
 | NAT 端 `probe-once` / `probe-enable` / `probe-disable` / `probe-status` | 既有 `jieshu` NAT 与 Peer 探测由操作者确认已真机验收；HY2 版本复制了相同机制但管理前缀不同 | **直接复用 `jieshu` NAT，不部署 HY2 NAT 管理器，不重复 Peer 验收**；NAT 实际冷重启属于单独破坏性测试 |
 | SOCKS5 账号、VLESS Reality 特定管理 | 不属于 HY2 五文件版 | 不应直接照搬 |
 
-`vpswg.sh` 也已是对 `jieshu/vpswg.sh` 的 HY2 适配版：大部分代码相同，但临时节点目录、锁和旧标记切换时的 fail-closed 保护不能直接替换回 VLESS 版本。历史测试已在 jieshu 的 VPS WG 配置与 HY2 节点组合下完成真实出口、断线阻断和 VPS 重启恢复；新机出口联调仍须实际验证，不代表所有版本混用都受支持。
+`vpswg.sh` 是对 `jieshu/vpswg.sh` 的 HY2 适配版：大部分代码相同，但临时节点目录、锁和旧标记切换时的 fail-closed 保护不能直接替换回 VLESS 版本。旧机已有 VPS 重启记录；本轮另行完成当前新 VPS 的真实 NAT 出口、测试 VPS WG 停止阻断与握手后恢复，不代表所有版本混用或生产 NAT 冷重启均已通过。
 
 对标目标是达到类似的管理体验和验证标准，不承诺把其他协议模块直接塞进 HY2。新增或修改的行为须完成相应 CI 与必要真机回归，未验证项保持明确状态。
 

@@ -69,6 +69,33 @@ remove_node_bandwidth() {
     || { refuse "cannot remove bandwidth policy for HY2 port $port; metadata retained"; return 1; }
 }
 
+backup_temp_unit() {
+  local source="$1" store="${2:-/var/lib/hy2/uninstalled-units}" name tmp
+  name="${source##*/}"
+  [[ "$name" =~ ^hy2-temp-[A-Za-z0-9._-]+[.]service$ && ${#name} -le 104 ]] \
+    || { refuse "invalid temporary unit backup: $name"; return 1; }
+  [[ -f "$source" && ! -L "$source" && ! -L "$store" ]] \
+    || { refuse "unsafe temporary unit backup path: $source"; return 1; }
+  install -d -m 700 "$store" && chown root:root "$store" \
+    || { refuse 'cannot secure temporary unit backup directory'; return 1; }
+  tmp="$(mktemp "$store/.${name}.XXXXXX")" || return 1
+  if ! install -m 600 "$source" "$tmp" || ! chown root:root "$tmp" \
+    || ! mv -fT -- "$tmp" "$store/$name"; then
+    rm -f -- "$tmp"
+    refuse "temporary unit backup failed; unit retained: $name"
+    return 1
+  fi
+}
+
+retain_restore_tool() {
+  [[ "$2" == 0 ]] || return 1
+  case "$1" in
+    /usr/local/sbin/hy2-guard|/etc/systemd/system/hy2-manual-guard.service|/usr/local/sbin/hy2_nat_preflight.sh)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 main() {
   local apply=0 purge=0 core=0 arg file path name unit port key domain='' core_path=''
   local -a units=()
@@ -79,7 +106,9 @@ main() {
       --remove-core) core=1 ;;
       -h|--help)
         echo 'Usage: bash hy2-uninstall.sh [--yes] [--purge] [--remove-core]'
-        echo 'Default: preview. --yes removes services/tools, retains HY2 data and certificates.'
+        echo 'Default: preview. --yes removes services/tools, retains HY2 data, certificates and private temporary unit backups.'
+        echo 'Retained guard CLI/disabled service restore saved firewall policies on reinstall.'
+        echo 'Retained HY2 NAT preflight helper verifies WG protections before restored NAT nodes start.'
         echo '--purge deletes HY2 data/config/credentials; ACME account and ACME certificate copies remain.'
         echo '--remove-core deletes the known Hysteria binary used by hy2.service.'
         echo 'Preserves SSH, WireGuard/NAT, portbw, ACME accounts, packages and system tuning.'
@@ -159,6 +188,14 @@ main() {
     [[ -f "$path" ]] || continue
     stop_unit "${path##*/}" || return 1
   done
+  if (( ! purge )); then
+    # Persist an explicit reinstall marker before removing unit definitions.
+    # Metadata alone would otherwise look like a broken node to normal GC.
+    for path in "${units[@]}"; do
+      [[ -f "$path" && "${path##*/}" == hy2-temp-*.service ]] || continue
+      backup_temp_unit "$path" || return 1
+    done
+  fi
   # Snapshot quota again with listeners stopped, closing the interval after
   # the shutdown-save unit's earlier collection.
   if [[ -x /usr/local/sbin/pq_save_state.sh ]]; then
@@ -186,13 +223,17 @@ main() {
     done
   fi
   remove_owned_tables || return 1
-  for path in "${units[@]}"; do rm -f -- "$path"; done
+  for path in "${units[@]}"; do
+    if retain_restore_tool "$path" "$purge"; then continue; fi
+    rm -f -- "$path"
+  done
   for file in /usr/local/sbin/pq_*.sh /usr/local/sbin/ip_set.sh /usr/local/sbin/ip_del.sh /usr/local/sbin/iplimit_restore_all.sh; do
     [[ -f "$file" ]] || continue
     check_command_owner "$file" || return 1
     rm -f -- "$file"
   done
   for file in /usr/local/sbin/hy2_*.sh /usr/local/sbin/hy2_traffic /usr/local/sbin/hy2-guard /usr/local/sbin/hy2-abuse; do
+    if retain_restore_tool "$file" "$purge"; then continue; fi
     [[ -f "$file" && ! -L "$file" ]] || continue
     grep -qi 'hy2' "$file" && rm -f -- "$file"
   done
