@@ -212,8 +212,10 @@ ROUTE_RESULT="$(ip -4 route get 1.1.1.1 oif "$WG_IF" 2>/dev/null || true)"
 
 HS="$(wg show "$WG_IF" latest-handshakes 2>/dev/null \
   | awk 'NF>=2{print $2}' | sort -nr | head -n1 || true)"
-[[ "$HS" =~ ^[0-9]+$ ]] && (( HS > 0 && $(date +%s) - HS <= HANDSHAKE_MAX )) \
-  || hy2_die "WireGuard 握手不存在或已超过 ${HANDSHAKE_MAX}s"
+CHECKED_NOW="$(date +%s)"
+[[ "$HS" =~ ^[0-9]+$ ]] \
+  && (( HS > 0 && CHECKED_NOW >= HS && CHECKED_NOW - HS <= HANDSHAKE_MAX )) \
+  || hy2_die "WireGuard 握手不存在、时间在未来或已超过 ${HANDSHAKE_MAX}s"
 PREFLIGHT
 
 cat >"$CREATOR_TMP" <<'CREATOR'

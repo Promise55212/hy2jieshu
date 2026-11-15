@@ -1536,13 +1536,13 @@ PEERS="$(wg show "$WG_IF" peers 2>/dev/null | wc -l | tr -d ' ')"
 
 echo "---- handshake check ----"
 HS="$(wg show "$WG_IF" latest-handshakes | awk 'NF>=2{print $2}' | sort -nr | head -n1 || true)"
-[[ -n "$HS" ]] || fail "读不到握手时间"
-(( HS > 0 )) || fail "从未握手。检查 NAT 机 wg-exit、UDP/${WG_PORT:-51820}、公钥和 Endpoint"
+[[ "$HS" =~ ^[0-9]+$ ]] && (( HS > 0 )) \
+  || fail "握手时间无效或从未握手。检查 NAT 机 wg-exit、UDP/${WG_PORT:-51820}、公钥和 Endpoint"
 
 NOW="$(date +%s)"
 AGE="$((NOW - HS))"
-(( AGE <= HANDSHAKE_MAX )) \
-  || fail "握手过旧：${AGE}s（> ${HANDSHAKE_MAX}s）。检查 NAT 机 wg-exit 和 UDP 51820"
+(( AGE >= 0 && AGE <= HANDSHAKE_MAX )) \
+  || fail "握手时间在未来或过旧：${AGE}s（有效范围 0-${HANDSHAKE_MAX}s）。检查系统时钟、NAT 机 wg-exit 和 UDP 51820"
 
 echo "---- marked HTTP exit-ip test ----"
 EXIT_IP="$(

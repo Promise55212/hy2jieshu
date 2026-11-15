@@ -66,7 +66,7 @@ class FreshInstallContract(unittest.TestCase):
             "portbw-install.sh", "portbw.py", "traffic.py",
         ):
             with self.subTest(name=name):
-                self.assertIn("/ceshi/main/" + name, guide)
+                self.assertIn("/hy2jieshu/main/" + name, guide)
         for step in (
             "bash /root/hy2_fresh_preflight.sh before",
             "bash /root/hy2_fresh_preflight.sh manager",
@@ -102,7 +102,7 @@ class FreshInstallContract(unittest.TestCase):
         self.assertIn("不重新安装 NAT", guide)
         self.assertIn("NAT 出口", guide)
         self.assertIn("原版 jieshu", guide)
-        self.assertNotIn("/ceshi/main/nat.sh", guide)
+        self.assertNotIn("/hy2jieshu/main/nat.sh", guide)
         # HY2's optional regression batches are explicitly test-host-only.
         self.assertIn("不要改掉其主机保护", guide)
 
@@ -114,9 +114,12 @@ class FreshInstallContract(unittest.TestCase):
         # The old accidental literal escaped newline broke the summary table.
         self.assertNotIn("|\\n| 每日流量", readme)
 
-    def test_docs_do_not_claim_fresh_machine_was_live_installed(self):
+    def test_guide_defers_live_results_to_the_actual_machine_report(self):
         guide = GUIDE.read_text(encoding="utf-8")
-        self.assertIn("本轮未在新的空白 VPS", guide)
+        self.assertIn("手册和 CI 契约不是目标机器的真实验收", guide)
+        self.assertIn("helan` 的通过记录不能冒充另一台全新机器", guide)
+        self.assertIn("../TASK_PROGRESS.md", guide)
+        self.assertIn("当次验收报告", guide)
         self.assertIn("基础接入冒烟测试", guide)
         self.assertNotIn("新机真机安装100%通过", guide)
 

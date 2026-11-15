@@ -64,5 +64,5 @@ class ReleaseTests(unittest.TestCase):
     def test_readme_has_server_install_commands(self):
         doc = (ROOT / "README.md").read_text()
         for name in FILES:
-            self.assertIn(f"/ceshi/main/{name}", doc)
+            self.assertIn(f"/hy2jieshu/main/{name}", doc)
             self.assertIn(f"bash -n /root/{name}", doc)

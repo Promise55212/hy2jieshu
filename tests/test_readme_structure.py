@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import unittest
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
@@ -68,6 +69,56 @@ class ReadmeContractTests(unittest.TestCase):
         # addresses used during operator testing.
         self.assertNotIn("162.211.231.219", report)
         self.assertNotIn("108.241.87.175", report)
+
+    def test_downloads_use_this_repository_and_existing_files(self):
+        docs = [README, *sorted((ROOT / "docs").glob("*.md"))]
+        downloads = []
+        for path in docs:
+            doc = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertNotIn("liucong552-art/ceshi", doc)
+            for owner, name in re.findall(
+                r"https://raw\.githubusercontent\.com/liucong552-art/"
+                r"([^/]+)/main/([A-Za-z0-9_./-]+)", doc
+            ):
+                with self.subTest(path=path.name, download=name):
+                    self.assertEqual(owner, "hy2jieshu")
+                    self.assertTrue((ROOT / name).is_file(), name)
+                    downloads.append(name)
+        for name in ("hy2.sh", "hy2-uninstall.sh", "traffic.py",
+                     "hy2-guard.py", "hy2-abuse.py", "vpswg.sh",
+                     "natjichang.sh", "portbw.py", "portbw-install.sh"):
+            self.assertIn(name, downloads)
+
+    def test_document_links_resolve_and_historical_status_is_scoped(self):
+        for path in [README, *sorted((ROOT / "docs").glob("*.md"))]:
+            doc = path.read_text(encoding="utf-8")
+            for target in re.findall(r"\]\(([^)]+)\)", doc):
+                if "://" in target or target.startswith("#"):
+                    continue
+                relative = unquote(target.split("#", 1)[0])
+                with self.subTest(path=path.name, target=target):
+                    self.assertTrue((path.parent / relative).is_file(), target)
+        doc = README.read_text(encoding="utf-8")
+        for status in ("当前真机通过", "复用已有证据", "仅自动化测试通过",
+                       "尚未验证", "不适用"):
+            self.assertIn(status, doc)
+        self.assertIn("不自动计入本轮通过", doc)
+        self.assertIn("docs/LEGACY_ACCEPTANCE_GUIDE.md", doc)
+
+    def test_uninstall_and_service_docs_describe_real_interfaces(self):
+        doc = README.read_text(encoding="utf-8")
+        self.assertIn('<a id="uninstall"></a>', doc)
+        for snippet in ("bash /root/hy2-uninstall.sh --yes",
+                        "--yes --purge --remove-core", "默认只预览",
+                        "WireGuard", "portbw", "acme.sh", "SSH",
+                        "TLS_CERT", "hy2-managed-restore.service",
+                        "hy2-managed-shutdown-save.service"):
+            self.assertIn(snippet, doc)
+        script = (ROOT / "hy2-uninstall.sh").read_text(encoding="utf-8")
+        for option in ("--yes", "--purge", "--remove-core"):
+            self.assertIn(option, script)
+        self.assertNotIn("不提供一键卸载命令", doc)
 
 
 if __name__ == "__main__":

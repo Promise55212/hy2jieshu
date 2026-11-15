@@ -54,6 +54,53 @@ class GuardTest(unittest.TestCase):
             self.assertNotIn("hy2_iplimit", batch)
             self.assertNotIn("wg-nat", batch)
 
+    def test_pause_and_ban_cover_tcp_udp_only_at_selected_port(self):
+        st = {"schema": 1, "paused": [40020],
+              "bans": {"40020": ["198.51.100.1/32", "2001:db8::1/128"]}}
+        for exists in (False, True):
+            rules = [line for line in guard.nft_commands(st, exists).splitlines()
+                     if line.startswith("add rule ")]
+            self.assertEqual(len(rules), 3)
+            for rule in rules:
+                self.assertIn(" meta l4proto { tcp, udp } th dport 40020 ", rule)
+                self.assertNotIn("dport 22", rule)
+                self.assertNotIn("dport 40021", rule)
+
+    def test_resume_preserves_source_bans(self):
+        state = {"schema": 1, "paused": [40020, 40021],
+                 "bans": {"40020": ["198.51.100.0/24"]}}
+        with mock.patch("sys.argv", ["hy2-guard", "resume", "40020"]), \
+             mock.patch.object(guard, "require_root"), \
+             mock.patch.object(guard, "lock"), \
+             mock.patch.object(guard, "load", return_value=state), \
+             mock.patch.object(guard, "update") as update:
+            guard.cli()
+        update.assert_called_once_with({"schema": 1, "paused": [40021],
+                                        "bans": {"40020": ["198.51.100.0/24"]}})
+
+    def test_forget_atomically_removes_only_deleted_node_state(self):
+        state = {"schema": 1, "paused": [40020, 40021], "bans": {
+            "40020": ["198.51.100.0/24"], "40021": ["2001:db8::/32"]}}
+        with mock.patch("sys.argv", ["hy2-guard", "forget", "40020"]), \
+             mock.patch.object(guard, "require_root"), \
+             mock.patch.object(guard, "lock"), \
+             mock.patch.object(guard, "load", return_value=state), \
+             mock.patch.object(guard, "require_hy2_port") as require_owner, \
+             mock.patch.object(guard, "update") as update:
+            guard.cli()
+        require_owner.assert_not_called()
+        update.assert_called_once_with({"schema": 1, "paused": [40021],
+                                        "bans": {"40021": ["2001:db8::/32"]}})
+
+    def test_node_cleanup_preserves_metadata_when_guard_forget_fails(self):
+        source = (SOURCE.parent / "hy2.sh").read_text(encoding="utf-8")
+        cleanup = source.split('cat >"${HY2_SBIN_DIR}/hy2_cleanup_one.sh"', 1)[1]
+        cleanup = cleanup.split("\nEOF", 1)[0]
+        guard_step = cleanup.index('/usr/local/sbin/hy2-guard forget "$PORT"')
+        metadata_removal = cleanup.index('rm -f "$CFG" "$META"')
+        self.assertLess(guard_step, metadata_removal)
+        self.assertIn('exit 1', cleanup[guard_step:metadata_removal])
+
     def test_no_accidental_ssh_or_unmanaged_ports(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

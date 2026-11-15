@@ -42,7 +42,7 @@ class ReadmeInstallLayout(unittest.TestCase):
                          sorted(self.hy2.index(s) for s in steps))
         for snippet in (
             "apt-get update && apt-get install -y curl ca-certificates nano",
-            "/ceshi/main/hy2.sh",
+            "/hy2jieshu/main/hy2.sh",
             "bash -n /root/hy2.sh && bash /root/hy2.sh",
             "nano /etc/default/hy2-main",
             "HY_DOMAIN=hy2.example.com",
@@ -98,7 +98,7 @@ class ReadmeInstallLayout(unittest.TestCase):
             "#### 通用 portbw：单独的受管理更新流程",
         ):
             self.assertIn(heading, maintenance)
-        self.assertNotIn("ceshi/main/nat.sh", maintenance)
+        self.assertNotIn("hy2jieshu/main/nat.sh", maintenance)
         self.assertIn("不需要升级或重装来支持 HY2", maintenance)
 
     def test_hy2_protocol_stays_specific_not_vless(self):

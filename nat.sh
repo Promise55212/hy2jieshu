@@ -22,6 +22,7 @@ umask 077
 # 用法：
 #   bash nat.sh init
 #   bash nat.sh add <name> <VPS_IP或域名> '<VPS_WG_PUBLIC_KEY>'
+#   # 旧写法兼容：add <name> <VPS_IP或域名> <VPS_WG_ADDR> '<VPS_WG_PUBLIC_KEY>'
 #   bash nat.sh del <name>
 #   bash nat.sh list
 #   bash nat.sh status
@@ -161,6 +162,8 @@ usage(){
   - 默认顺序为：10.66.66.1、10.66.66.3、10.66.66.4……
     （10.66.66.2 是 NAT 机自身地址，会自动跳过。）
   - 对同一个 name 再次执行 add，会保留原来的 WG 地址，仅更新 Endpoint/公钥。
+  - 兼容旧写法（新部署建议使用上面的自动分配）：
+    bash $0 add <name> <VPS_IP或域名> <VPS_WG_ADDR> '<VPS_WG_PUBLIC_KEY>'
 示例：
   bash $0 init
   bash $0 add vps-1 1.2.3.4 'PUBLIC_KEY'
@@ -203,10 +206,10 @@ need_packages(){
   apt-get update -o Acquire::Retries=3 >/dev/null \
     || fail "apt-get update 失败；请检查 ${OS_PRETTY_NAME} 的软件源"
   apt_install_with_universe_retry \
-    "$wg_package" iproute2 iptables curl ca-certificates procps kmod findutils util-linux coreutils
+    "$wg_package" iproute2 iptables curl ca-certificates procps kmod findutils util-linux coreutils iputils-ping
 
   local cmd
-  for cmd in wg wg-quick ip iptables curl sysctl modprobe find flock timeout sha256sum; do
+  for cmd in wg wg-quick ip iptables curl sysctl modprobe find flock timeout sha256sum ping; do
     command -v "$cmd" >/dev/null 2>&1 || fail "依赖安装后仍缺少命令：${cmd}"
   done
 }
@@ -1436,8 +1439,14 @@ main(){
       cmd_init
       ;;
     add)
-      [[ $# -eq 4 ]] || fail "用法: bash $0 add <name> <VPS_IP或域名> '<VPS_WG_PUBLIC_KEY>'"
-      cmd_add "$2" "$3" "$4"
+      case "$#" in
+        4) cmd_add "$2" "$3" "$4" ;;
+        5)
+          warn "检测到旧版 add 写法；仍兼容，但以后可省略 VPS_WG_ADDR。"
+          cmd_add "$2" "$3" "$5" "$4"
+          ;;
+        *) fail "用法: bash $0 add <name> <VPS_IP或域名> '<VPS_WG_PUBLIC_KEY>'" ;;
+      esac
       ;;
     del)
       [[ $# -eq 2 ]] || fail "用法: bash $0 del <name>"

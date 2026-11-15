@@ -2,9 +2,9 @@
 
 命令使用 **root + Bash**，示例端口换成实际端口。长命令和低频操作点击展开，所有内容都在本 README 内。
 
-[查询](#queries) · [新建节点](#create) · [修改与重置](#modify) · [排查](#trouble-guide) · [封禁与删除](#remove) · [安装与更新](#install)
+[查询](#queries) · [新建节点](#create) · [修改与重置](#modify) · [排查](#trouble-guide) · [封禁与删除](#remove) · [安装与更新](#install) · [卸载](#uninstall) · [验收](#acceptance)
 
-> 按 [jieshu README](https://github.com/liucong552-art/jieshu/blob/main/README.md) 的六章节顺序、查询入口、折叠方式组织，但内容替换为能实际运行的 HY2 命令。未实现的功能明确标注。
+> 对标 [jieshu README](https://github.com/liucong552-art/jieshu/blob/main/README.md) 的六章节顺序、查询入口和折叠布局，命令针对 Hysteria 2 的 UDP / QUIC / TLS 适配。当前验收见[验收与对标](#acceptance)，开发接续见 [TASK_PROGRESS.md](TASK_PROGRESS.md)。
 
 <a id="queries"></a>
 ## 一、查询与检查
@@ -16,11 +16,13 @@
 | 端口监听、TLS、WG 出口和管理组件 | HY2 VPS | `hy2_doctor.sh --strict` |
 | 指定临时节点状态 | HY2 VPS | `hy2_audit.sh --tag hy2-temp-节点名称` |
 | 刷新临时节点订阅 | HY2 VPS | `hy2_temp_sub.sh` |
-| WG-NAT 出口与 fail-closed 检查 | HY2 VPS | `/usr/local/sbin/wg_nat_healthcheck.sh` |
+| WG 状态与握手（只读） | HY2 VPS | `wg show wg-nat`；主动出口与防护检查见 [WG-NAT](#wg-nat) |
 | Peer 列表 / NAT 出口机状态 | NAT 机 | `bash /root/nat.sh list` / `bash /root/nat.sh status` |
 | 异常服务日志 | HY2 VPS | [故障排查](#troubleshooting) |
 | 独立端口限速与自动降速（可选） | HY2 VPS | [安装与管理 portbw](#portbw) / `portbw report` | 
-| 每日流量、黑名单等是否支持 | — | [功能差距](#feature-gap) |
+| 今天 / 指定端口每日流量 | HY2 VPS | `hy2_traffic` / `hy2_traffic 40020`（[先安装](#daily-install)） |
+| 全部受管理暂停、IP/CIDR 黑名单 | HY2 VPS | `hy2-guard status` / `hy2-guard audit`（[先安装](#port-block)） |
+| 节点链接、自动重置日期、自动降速日志 | HY2 VPS | [查链接](#node-link) / [查重置日期](#quota-reset-time) / [查限速日志](#speed-logs) |
 
 `hy2_audit.sh` 和 `pq_audit.sh` 对同一端口的配额使用同一底层计数快照，不是两套不同计费。`hy2_temp_sub.sh` 输出的订阅文件包含节点凭据。
 
@@ -68,7 +70,7 @@ hy2_temp_sub.sh
 | 单端口限速 | `portbw show 40020` | 独立的 nft/tc 状态 |
 | 动态限速采样进度 | `portbw auto status 40020` | 触发、保护与恢复 |
 | 限速自检 | `portbw audit` | 异常返回非零 |
-| NAT 出口 | `/usr/local/sbin/wg_nat_healthcheck.sh` | WG 握手与出口 |
+| NAT 状态 | `wg show wg-nat` | 只读查看 Peer 与握手；实际出口需主动检查 |
 
 累计总流量配额和 Mbps 带宽是不同概念。
 
@@ -83,27 +85,16 @@ hy2_temp_sub.sh
 修改第一行端口。输出包含密码，不要提交到 GitHub。
 
 ```bash
-
 PORT=40020
-
 if [[ "$PORT" == 443 ]]; then
-
   cat /root/hy2_main_url.txt
-
 else
-
   mapfile -t m < <(grep -l "^PORT=$PORT$" /var/lib/hy2/temp/*.env 2>/dev/null)
-
   if (( ${#m[@]} == 1 )); then
-
     cat "${m[0]%.env}.url"
-
   else
-
     echo "未找到唯一端口对应的节点，请检查 hy2_audit.sh"
-
   fi
-
 fi
 
 ```
@@ -119,13 +110,9 @@ fi
 `IP_LIMIT` 为活跃来源 IP 槽位，不是实际人数；HY2 用 UDP，不照搬 VLESS 的 TCP established 查询。
 
 ```bash
-
 PORT=40020
-
 source /usr/local/lib/hy2/iplimit-lib.sh
-
 hy2_il_active_ips "$PORT"
-
 ss -lunp | grep ":$PORT " || true
 
 ```
@@ -160,7 +147,7 @@ hy2_traffic 40020 --json
 - 数据文件 `/var/lib/hy2/traffic/daily.json`，节点密码不保存到历史文件，只保存不可逆身份摘要；同名重建/端口复用、主节点密码轮换不会继承旧用户历史。
 - 每分钟定时采集；查询时也执行采集。自动删除/到期节点的历史会在下次成功采集时清理，保留 30 个北京时间自然日。
 - 采用**独立** `inet hy2_daily_traffic` nft 表，只统计该节点 UDP 端口双向字节，不修改 `hy2_pq` 或 `hy2_iplimit`。跨午夜分钟采样、断电尚未保存的尾部流量有少量归属/丢失风险，不能把它作为毫秒级结算系统。
-- 与 `jieshu` 一样配有定时采集和关机 `ExecStop` 保存服务；**部署到 HY2 VPS 后的实际读写、重启和端口复用仍需要真机测试**，CI 只能证明程序结构和模拟计数逻辑。
+- 与 `jieshu` 一样配有定时采集和关机 `ExecStop` 保存服务。旧测试机已有实际读写及正常重启保留记录；当前新机结论单独记录在[本轮验收](#acceptance)，CI 不能代替真机。
 
 </details>
 
@@ -225,7 +212,6 @@ hy2-abuse 40020 --days 7 --json
 只导出有效且运行的临时节点到 `/root/hy2_temp_subscription.txt` 和 Base64 文件，不包含主节点。Base64 不是加密。
 
 ```bash
-
 hy2_temp_sub.sh
 
 ```
@@ -420,7 +406,7 @@ ip_del.sh 40000
 
 **已实现 `pq_keepcycle.sh`**：直接使用 HY2 现有的配额库、临时节点/配额双锁、nft 原子重建和元数据所有者检查。对**已有配额且尚未到期的临时节点**，将总配额重新设定、已用量清零，**保留原 30 天周期日期**；若有效期严格超过 30 天、但此前 `pq_add.sh` 清除了周期，可按节点创建时间恢复应有的周期锚点。短期节点不会新增周期。
 
-**2026-11-05 真机验收通过**：独立 31 天 HY2-NAT 临时节点已用 41.07KiB 时调用 `pq_keepcycle.sh`，配额 20.48MiB → 40.96MiB、已用清零、原 30 天重置时间（北京时间 2026-12-05 09:20:25）不变，`KEEP_CYCLE_METADATA_TEST=PASS`，主 HY2/WG 正常。实际跨 30 天自动触发仍未验证。
+**历史验收（2026-11-05，旧测试机）**：独立 31 天 HY2-NAT 临时节点已用 41.07KiB 时调用 `pq_keepcycle.sh`，配额 20.48MiB → 40.96MiB、已用清零、原 30 天重置时间（北京时间 2026-12-05 09:20:25）不变，`KEEP_CYCLE_METADATA_TEST=PASS`，主 HY2/WG 正常。实际跨 30 天自动触发仍未验证。
 
 示例：把 UDP 40020 的配额重置为 **500 MiB**，保留或按创建日恢复原周期：
 
@@ -433,14 +419,14 @@ pq_audit.sh 40020
 如果你还没有重新运行新版 `hy2.sh` 管理器，也可**只下载独立命令**，避免重装 WG 或修改运行中的 HY2：
 
 ```bash
-curl -fL https://raw.githubusercontent.com/liucong552-art/ceshi/main/pq_keepcycle.sh -o /root/pq_keepcycle.sh
+curl -fL https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/pq_keepcycle.sh -o /root/pq_keepcycle.sh
 bash -n /root/pq_keepcycle.sh
 bash /root/pq_keepcycle.sh 40020 0.48828125
 ```
 
 执行会在 `/root/pq-keepcycle-端口-随机字符/` 下备份节点和配额元数据（含敏感信息，保持 root 私有），然后更新配额和 nft 规则。与 `pq_add.sh` 的关键区别是**不随手删除原自动重置日期**。必须确认端口正确，且确定需要将已用量清零；该命令不是增加余额。
 
-**测试边界**：源码语法、安装器生成的一致性、元数据锁/归属检查和重置计算由 CI 覆盖；仍需在有 30 天以上有效期的**专用测试节点**上验证实际计数、保留日期和重启持久化，不能在当前生产节点上盲目重置。
+**测试边界**：历史记录支持已用清零与周期锚点保留；实际跨 30 天触发不在该记录范围。新机与当前代码的验证状态见[本轮验收](#acceptance)。测试只能使用专用节点，正式业务端口上执行会清零已用量。
 
 <a id="quota-reset-time"></a>
 
@@ -451,35 +437,20 @@ bash /root/pq_keepcycle.sh 40020 0.48828125
 只需修改端口；此查询读取 `/var/lib/hy2/quota`，不会修改内核配额。
 
 ```bash
-
 PORT=40020
-
 META="/var/lib/hy2/quota/$PORT.env"
-
 if [[ -f "$META" ]]; then
-
   NEXT=$(awk -F= '$1=="NEXT_RESET_EPOCH"{print $2; exit}' "$META")
-
   INT=$(awk -F= '$1=="RESET_INTERVAL_SECONDS"{print $2; exit}' "$META")
-
   if [[ "$NEXT" =~ ^[0-9]+$ && "$INT" =~ ^[0-9]+$ ]] && (( NEXT>0 && INT>0 )); then
-
     TZ=Asia/Shanghai date -d "@$NEXT" "+下次计划重置（北京时间）：%F %T"
-
     NOW=$(date +%s)
-
     (( NEXT>NOW )) && echo "剩余 $((NEXT-NOW)) 秒" || echo "已到预定时间，请检查 pq-reset.timer"
-
   else
-
     echo "该端口没有启用周期重置"
-
   fi
-
 else
-
   echo "没有该端口配额配置"
-
 fi
 
 ```
@@ -487,9 +458,7 @@ fi
 `pq-reset.timer` 开机约 15 分钟后首次检查，以后通常每小时检查一次。
 
 ```bash
-
 systemctl list-timers --all pq-reset.timer
-
 journalctl -u pq-reset.service -n 50 --no-pager
 
 ```
@@ -562,9 +531,9 @@ portbw del 40001        # 仅取消端口限速，不删除 HY2 节点
 
 
 
-**HY2-NAT 真机测速（2026-11-04）：** `portbw set 40020 10 10`、`portbw report`、`portbw audit` 均正常，用户报告 v2rayN 测速通过，最后 `portbw del 40020` 正常取消。**自动 40→18 Mbps 的持续触发和恢复尚未单独验证。**
+**HY2-NAT 真机测速（2026-11-04）：** `portbw set 40020 10 10`、`portbw report`、`portbw audit` 均正常，用户报告 v2rayN 测速通过，最后 `portbw del 40020` 正常取消。**这是旧主机对特定 HY2 链路的记录；通用自动触发与恢复复用同源码 `jieshu` 验收，不把旧主机当作当前 VPS。**
 
-**注意：** 独立限速不会因 HY2 临时节点到期/删除而自动移除；复用端口前要用 `portbw report` 检查。对 WG-NAT 节点按 HY2 VPS 的 UDP 40020 限速，不是 NAT 出口机的 WG 51820。
+**节点回收：** HY2 临时节点到期或删除时，会调用 `portbw del` 清理该节点端口已保存的独立限速策略；失败则保留节点元数据，报告错误供重试，避免新节点继承旧限速。不会清理其他端口或卸载共享 portbw。对 WG-NAT 节点按 HY2 VPS 的 UDP 40020 限速，不是 NAT 出口机的 WG 51820。
 
 <a id="troubleshooting"></a>
 ## 四、故障排查
@@ -580,10 +549,10 @@ portbw del 40001        # 仅取消端口限速，不删除 HY2 节点
 | NAT 节点无法创建 | `wg_nat_healthcheck.sh` / `wg show wg-nat` | 先检查 WG 握手、路由、NAT Peer |
 | WG 断开导致 NAT 节点无法联网 | `ip -4 route show table 100` | 若仍有 `prohibit default` 是预期 fail-close，不可改走 VPS |
 | 刚重启时 NAT 节点短暂启动失败 | `journalctl -b -u hy2-temp-对应TAG.service` | WG 首次握手可能延后，观察是否自动重试成功 |
-| 首次整机重启配额变成 0 | `systemctl is-active hy2-managed-shutdown-save.service` | 初装启动缺陷已由 [PR #3](https://github.com/liucong552-art/ceshi/pull/3) 修复 |
+| 首次整机重启配额变成 0 | `systemctl is-active hy2-managed-shutdown-save.service` | 初装启动缺陷已由 [首次关机保存修复](https://github.com/liucong552-art/hy2jieshu/commit/893bb2dc25cc96bd7076849385d79ebefd730952) 修复 |
 | doctor 警告缺少 `HYSTERIA_BINARY_SHA256` | `hy2_doctor.sh --strict` | 未配置持续核心校验，不是连接故障 |
 | 到期节点端口未释放 | `journalctl -u hy2-gc.service -n 50 --no-pager` | 查 GC timer 和防火墙状态，不要盲目覆盖端口 |
-| HY2 节点限速异常或删节点后端口仍被限速 | `portbw report`、`portbw audit`、`portbw show 40020` | `portbw` 独立于节点生命周期；仅确认归属后执行 `portbw del 40020` |
+| HY2 节点限速异常或清理报错 | `portbw report`、`portbw audit`、`portbw show 40020` | 删除节点会清对应端口策略；失败会保留元数据，修复限速器后重试节点清理 |
 
 ### 常用只读检查
 
@@ -619,6 +588,42 @@ journalctl -u wg-quick@wg-nat.service -n 50 --no-pager
 systemctl start hy2-managed-watchdog.service
 ```
 
+<a id="service-management"></a>
+
+<details>
+<summary>服务管理、重启恢复与证书检查</summary>
+
+主节点与每个临时节点各自为一个 systemd 服务；管理器安装后启用恢复、配额保存、到期回收和看门狗。每日流量与手工黑名单安装后各有独立服务。
+
+| 服务 / 定时器 | 作用 |
+|---|---|
+| `hy2.service` | 主节点；`systemctl restart hy2.service` 只重启主节点 |
+| `hy2-temp-节点名称.service` | 对应临时节点；完整名称以 `hy2_audit.sh` 为准 |
+| `hy2-managed-restore.service` | 开机恢复受管理配额、IP 限制和节点保护 |
+| `hy2-managed-watchdog.timer` | 定期检查并恢复异常临时节点，失败保持阻断 |
+| `hy2-gc.timer` | 回收自然到期临时节点 |
+| `pq-save.timer` / `pq-reset.timer` | 定期保存已用量 / 检查到期的 30 天周期 |
+| `hy2-managed-shutdown-save.service` | 正常关机前保存受管理配额 |
+
+```bash
+systemctl list-timers --all hy2-managed-watchdog.timer hy2-gc.timer pq-save.timer pq-reset.timer
+systemctl status hy2-managed-restore.service hy2-managed-shutdown-save.service --no-pager
+```
+
+临时停止服务后，看门狗可能重新启动它；需要暂停用户连接时用 `hy2-guard pause 端口`，永久撤销用[删除节点](#node-manage)。正常 `reboot` 会经过保存流程；异常断电可能丢失最后一次保存后的流量，不将这两类情况混为一谈。
+
+证书通过 acme.sh 定时续期及 HY2 reload hook 验证和应用；先检查证书与日志，避免为排障反复强制签发而触发 CA 限额：
+
+```bash
+CERT=$(awk -F= '$1=="TLS_CERT"{print substr($0,index($0,"=")+1); exit}' /var/lib/hy2/main/main.env)
+openssl x509 -in "$CERT" -noout -subject -issuer -dates
+journalctl -u hy2.service -n 50 --no-pager
+```
+
+证书路径由 `/var/lib/hy2/main/main.env` 的 `TLS_CERT` 读取，通常为 `/etc/hysteria/certs/域名/fullchain.pem`。续期测试、升级回滚和故障注入的实际验收范围见[验收记录](#acceptance)。
+
+</details>
+
 <a id="remove"></a>
 ## 五、暂停、封禁与删除
 
@@ -629,7 +634,7 @@ systemctl start hy2-managed-watchdog.service
 ### 初次安装（HY2 VPS 执行）
 
 ```bash
-curl -fL --retry 3 https://raw.githubusercontent.com/liucong552-art/ceshi/main/hy2-guard.py -o /root/hy2-guard.py
+curl -fL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2-guard.py -o /root/hy2-guard.py
 python3 -m py_compile /root/hy2-guard.py
 python3 /root/hy2-guard.py install
 hy2-guard audit
@@ -681,7 +686,7 @@ hy2-guard unban 40020 203.0.113.0/24
 hy2-guard clear 40020
 ```
 
-**区别**：`IP_LIMIT=1` 是最多同时允许一个活跃来源 IP；`hy2-guard ban` 则直接封禁具体来源地址或网段，它们各自独立，互不替代。手工黑名单支持持久化，删除临时节点不自动清除手工规则。
+**区别**：`IP_LIMIT=1` 是最多同时允许一个活跃来源 IP；`hy2-guard ban` 则直接封禁具体来源地址或网段，它们各自独立，互不替代。手工黑名单支持持久化，暂停与封禁均覆盖同数字端口的 TCP + UDP。新版节点清理会调用 `hy2-guard forget` 删除该端口的暂停与黑名单，避免端口复用继承旧规则。
 
 <a id="blacklist-report"></a>
 
@@ -694,6 +699,8 @@ systemctl is-enabled hy2-manual-guard.service
 systemctl is-active hy2-manual-guard.service
 ```
 
+若需手动撤销某端口的暂停及全部来源黑名单，可在核对归属后执行 `hy2-guard forget 40020`；这不会删除 HY2 节点或修改其配额。
+
 如果因外部清空表导致 `audit` 失败，在确认没有其他管理器冲突后，可运行 `hy2-guard restore` 恢复独立表。恢复只使用本模块的状态文件，不读取任意 shell 配置。
 
 </details>
@@ -704,7 +711,7 @@ systemctl is-active hy2-manual-guard.service
 
 <summary>删除指定 HY2 临时节点 / 清空全部临时节点</summary>
 
-删除临时节点会使对应链接失效并清理其配额/IP 规则；不会删除 HY2 主节点或 WireGuard。清理前先运行 `hy2_audit.sh` 确认完整 TAG。
+删除临时节点会使对应链接失效并清理其配额/IP 规则与本端口的手工暂停/黑名单；不会删除 HY2 主节点或 WireGuard。独立 portbw 策略仍须单独管理。清理前先运行 `hy2_audit.sh` 确认完整 TAG。
 
 #### 强制删除一个临时节点
 
@@ -721,6 +728,37 @@ FORCE=1 hy2_cleanup_one.sh hy2-temp-节点名称
 ```bash
 hy2_clear_all.sh
 ```
+
+</details>
+
+<a id="uninstall"></a>
+
+<details>
+<summary>卸载 HY2：先预览，按需保留或删除数据</summary>
+
+在 HY2 VPS 执行。先下载并查看帮助、预览操作范围：
+
+```bash
+curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2-uninstall.sh -o /root/hy2-uninstall.sh
+chmod 700 /root/hy2-uninstall.sh
+bash -n /root/hy2-uninstall.sh && bash /root/hy2-uninstall.sh
+```
+
+默认只预览。确认备份已保存后，下面两种方式选择一种：
+
+```bash
+# 停止并移除 HY2 管理服务、命令与专用防火墙，保留运行数据和证书
+bash /root/hy2-uninstall.sh --yes
+```
+
+```bash
+# 同时删除 HY2 节点、配额、统计、配置及证书；并移除 Hysteria 核心
+bash /root/hy2-uninstall.sh --yes --purge --remove-core
+```
+
+卸载会使 HY2 链接停止工作。WireGuard、NAT Peer、portbw 程序、acme.sh 账户与 SSH 配置分别管理，不随 HY2 卸载删除；保留数据卸载时也保留对应端口限速，`--purge` 会清理 HY2 主节点及临时节点元数据所列端口的 portbw 策略，其他端口保留。脚本对共用名称的配额服务和命令进行 HY2 归属检查，拒绝删除其他应用的组件。
+
+`--purge` 删除的数据无法由 GitHub 恢复；`/root/.acme.sh` 中的账户及 ACME 证书副本仍保留，不能将此命令当作所有密钥的彻底销毁。保留数据卸载后重新安装也必须检查旧节点有效期和防护，不能将它当作空白机直接运行首次安装前置检查。
 
 </details>
 
@@ -778,7 +816,7 @@ apt-get update && apt-get install -y curl ca-certificates nano iproute2
 依赖安装成功后，下载并安装管理工具（修改系统）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/hy2.sh' -o /root/hy2.sh && chmod 700 /root/hy2.sh && bash -n /root/hy2.sh && bash /root/hy2.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2.sh' -o /root/hy2.sh && chmod 700 /root/hy2.sh && bash -n /root/hy2.sh && bash /root/hy2.sh
 ```
 
 本步骤生成 `/etc/default/hy2-main`、`/root/onekey_hy2_main_tls.sh`、临时节点管理器、配额和 IP 限制、看门狗、恢复任务以及对应 systemd 单元。**安装管理器本身还不会自动创建可连接的 HY2 主节点。**
@@ -888,7 +926,7 @@ WG-NAT 让 HY2 VPS 上指定的临时节点通过另一台机器的公网 IPv4 �
 
 ```bash
 apt-get update && apt-get install -y curl ca-certificates
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/nat.sh' -o /root/nat.sh && chmod 700 /root/nat.sh && bash -n /root/nat.sh && bash /root/nat.sh init
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/nat.sh' -o /root/nat.sh && chmod 700 /root/nat.sh && bash -n /root/nat.sh && bash /root/nat.sh init
 ```
 
 无法自动识别 WAN 网卡时，只在全新 NAT 机按实际名称指定 `WAN_IF=实际网卡`；不要从新机部署步骤反向修改现有 `jieshu` NAT。
@@ -898,7 +936,7 @@ curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/mai
 在**新 HY2 VPS** 执行（下载并部署 VPS 端 WireGuard）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/vpswg.sh' -o /root/vpswg.sh && chmod 700 /root/vpswg.sh && bash -n /root/vpswg.sh && bash /root/vpswg.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/vpswg.sh' -o /root/vpswg.sh && chmod 700 /root/vpswg.sh && bash -n /root/vpswg.sh && bash /root/vpswg.sh
 ```
 
 脚本会生成**新 VPS 专属**的 WireGuard 公钥。以后需要查询时，在该 HY2 VPS 执行：
@@ -952,7 +990,7 @@ cat /etc/wireguard/wg-exit.pub
 在**新 HY2 VPS** 执行（只更新 VPS 端模块，不动 NAT 机）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/natjichang.sh' -o /root/natjichang.sh && chmod 700 /root/natjichang.sh && bash -n /root/natjichang.sh && bash /root/natjichang.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/natjichang.sh' -o /root/natjichang.sh && chmod 700 /root/natjichang.sh && bash -n /root/natjichang.sh && bash /root/natjichang.sh
 ```
 
 检查新 VPS 的 WG-NAT 准备情况：
@@ -1010,7 +1048,7 @@ bash /root/nat.sh probe-status hy2
 在 HY2 VPS 下载并安装统计组件（首次安装和后续更新使用同一命令）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/traffic.py' -o /root/hy2_traffic.py && python3 -m py_compile /root/hy2_traffic.py && python3 /root/hy2_traffic.py --install
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/traffic.py' -o /root/hy2_traffic.py && python3 -m py_compile /root/hy2_traffic.py && python3 /root/hy2_traffic.py --install
 ```
 
 安装器会管理 `hy2-traffic.timer`、`hy2-traffic.service` 及 `hy2-traffic-shutdown.service`。旧的历史数据应当保留；不需要执行 `hy2.sh` 重装，也不会更改 `pq-save.timer`。
@@ -1047,8 +1085,8 @@ apt-get update && apt-get install -y curl ca-certificates python3 iproute2 nftab
 依赖安装成功后，下载两个配套文件；以下命令仅下载，不安装、不创建限速策略：
 
 ```bash
-curl -fsSL 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/portbw-install.sh' -o /root/portbw-install.sh && \
-curl -fsSL 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/portbw.py' -o /root/portbw.py
+curl -fsSL 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw-install.sh' -o /root/portbw-install.sh && \
+curl -fsSL 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw.py' -o /root/portbw.py
 ```
 
 两次下载均成功后再继续。已有 portbw 的主机应看下面的升级说明，不要执行新安装流程。
@@ -1140,7 +1178,7 @@ portbw audit
 在**需要更新的 HY2 VPS** 下载同一仓库版本，并检查 Bash 语法后再更新（保留既有主节点配置、节点状态和凭据；仍建议先做 VPS 快照）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/hy2.sh' -o /root/hy2.sh && chmod 700 /root/hy2.sh && bash -n /root/hy2.sh && bash /root/hy2.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2.sh' -o /root/hy2.sh && chmod 700 /root/hy2.sh && bash -n /root/hy2.sh && bash /root/hy2.sh
 ```
 
 需要重新应用主配置或**显式**升级 Hysteria 二进制时，回到上面的[6.1 主节点步骤](#hy2-install)。仅刷新管理组件不应当自动切换正在运行的核心版本。
@@ -1148,7 +1186,7 @@ curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/mai
 #### HY2 VPS：更新每日流量统计
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/traffic.py' -o /root/hy2_traffic.py && python3 -m py_compile /root/hy2_traffic.py && python3 /root/hy2_traffic.py --install
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/traffic.py' -o /root/hy2_traffic.py && python3 -m py_compile /root/hy2_traffic.py && python3 /root/hy2_traffic.py --install
 hy2_traffic
 ```
 
@@ -1159,15 +1197,15 @@ hy2_traffic
 这些脚本**只在 HY2 VPS** 执行，不是 NAT 出口机的更新。WG 脚本可能调整路由与接口配置；已经正常运行时，不要为对标而盲目覆盖，确实需要升级再安排维护窗口：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/vpswg.sh' -o /root/vpswg.sh && chmod 700 /root/vpswg.sh && bash -n /root/vpswg.sh && bash /root/vpswg.sh
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/main/natjichang.sh' -o /root/natjichang.sh && chmod 700 /root/natjichang.sh && bash -n /root/natjichang.sh && bash /root/natjichang.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/vpswg.sh' -o /root/vpswg.sh && chmod 700 /root/vpswg.sh && bash -n /root/vpswg.sh && bash /root/vpswg.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/natjichang.sh' -o /root/natjichang.sh && chmod 700 /root/natjichang.sh && bash -n /root/natjichang.sh && bash /root/natjichang.sh
 ```
 
 更新后用 `wg_nat_healthcheck.sh` 与 `natjichang.sh check` 核实；现有 Peer 公钥、AllowedIPs 与 NAT 映射必须保持正确。
 
 #### NAT 出口机：沿用已验收的 jieshu，禁止 HY2 覆盖
 
-**你现有的 `jieshu` NAT 不需要升级或重装来支持 HY2。** 以后确有 NAT 管理器升级需求时，按照 **`jieshu` 原仓库 README 的 6.6** 和它自己已验收的管理流程执行。不要在该机下载 `ceshi/nat.sh`，不要执行 HY2 版本 `init`，也不要为 HY2 节点安装第二套探测 timer。
+**你现有的 `jieshu` NAT 不需要升级或重装来支持 HY2。** 以后确有 NAT 管理器升级需求时，按照 **`jieshu` 原仓库 README 的 6.6** 和它自己已验收的管理流程执行。不要在该机下载 `hy2jieshu/nat.sh`，不要执行 HY2 版本 `init`，也不要为 HY2 节点安装第二套探测 timer。
 
 #### 通用 portbw：单独的受管理更新流程
 
@@ -1183,10 +1221,9 @@ curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/ceshi/mai
 在 HY2 VPS 以 root 安装只读命令；**不会重启 Hysteria、修改服务配置或启动后台采集器**：
 
 ```bash
-curl -fL --retry 3 https://raw.githubusercontent.com/liucong552-art/ceshi/main/hy2-abuse.py -o /root/hy2-abuse.py
+curl -fL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2-abuse.py -o /root/hy2-abuse.py
 python3 -m py_compile /root/hy2-abuse.py
 install -m 755 /root/hy2-abuse.py /usr/local/sbin/hy2-abuse
-
 PORT=40020 DAYS=7 hy2-abuse
 hy2-abuse 40020 --days 7 --json
 ```
@@ -1243,9 +1280,9 @@ bash /root/portbw-install.sh rollback
 
 <summary>版本说明与看门狗运行规则</summary>
 
-2026-11-04 Debian 13 真机已验证 HY2 主/临时节点、双向配额、来源 IP 限制、到期清理、WG-NAT 出口、断线防泄漏、VPS 重启恢复和 `portbw` 静态 10/10 Mbps。**动态 40→18 Mbps 的持续触发、保护、恢复及其他未测场景不在本次通过范围。**
+旧测试机在 2026-11-04 Debian 13 真机已验证 HY2 主/临时节点、双向配额、来源 IP 限制、到期清理、WG-NAT 出口、断线防泄漏、VPS 重启恢复和 `portbw` 静态 10/10 Mbps。通用 portbw 的自动触发与恢复复用 `jieshu` 同源码历史验收；旧记录不代表当前 VPS 的端到端持续吞吐已经测试。
 
-首次安装后配额重启归零问题由 [PR #3](https://github.com/liucong552-art/ceshi/pull/3) 修复；通用 portbw 与 jieshu 源码一致，由 [PR #5](https://github.com/liucong552-art/ceshi/pull/5) 原样引入。
+首次安装后配额重启归零问题由 [首次关机保存修复](https://github.com/liucong552-art/hy2jieshu/commit/893bb2dc25cc96bd7076849385d79ebefd730952) 修复；通用 portbw 与 jieshu 源码一致，由 [通用 portbw 引入提交](https://github.com/liucong552-art/hy2jieshu/commit/ab009ef736dc77c3cf6cf00f724867902ae89c04) 原样引入。
 
 ### 看门狗与生产运行规则
 
@@ -1260,7 +1297,21 @@ bash /root/portbw-install.sh rollback
 <a id="acceptance"></a>
 ### Debian 13 真机验收与 `jieshu` 功能对标
 
-[**完整实测记录：2026-11-04 Debian 13**](tests/REAL_MACHINE_ACCEPTANCE_2026-11-04.md)详细列出每个步骤、通过依据和未测试项。实测包括：普通临时节点及双向配额、来源 IP 上限、到期清理；一次真正发现的**首次关机配额持久化问题**（已通过 [PR #3](https://github.com/liucong552-art/ceshi/pull/3) 修复）；WG-NAT 客户端真实出口、断线阻断、恢复及整机重启后配额保留。
+**当前新机与旧证据分开记录。** 本轮为 2026-11-15 全新 Debian 13 VPS，实际测试、修复、未完成项见 [TASK_PROGRESS.md](TASK_PROGRESS.md) 及其中链接的当次验收报告。下文 2026-11-04 / 05 的结果均来自旧测试机，不自动计入本轮通过。
+
+**当前阶段实测：** [2026-11-15 新机报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)记录正式 TLS、Windows 官方客户端主/临时节点、双向内容 SHA256、UDP echo、真实配额耗尽及恢复、来源 IP 槽位、TCP + UDP 暂停/来源封禁、portbw 静态限速集成和真实整机重启通过；重启前后 daily 与配额保存字节精确一致。通用自动降速算法复用 `jieshu` 同源码验收。Watchdog 故障注入、删除复用、保护失效恢复、卸载重装和最终回归仍在继续；未提供外部 NAT，IPv6、实际 72 小时/30 天、真实续证和异常断电未测。
+
+| 状态 | 判定依据 |
+|---|---|
+| 当前真机通过 | 当次报告记录实际执行、观察结果与清理；监听或配置检查不能代替客户端连通 |
+| 复用已有证据 | 源码一致、依赖与适用条件一致，并明确原证据来源；新 Peer 连通仍须单独检查 |
+| 仅自动化测试通过 | 单元测试、语法、生成脚本或模拟环境；不声称公网 UDP / TLS 已通过 |
+| 尚未验证 | 缺少环境、凭据或长期等待；保留具体边界及后续条件 |
+| 不适用 | VLESS Reality 密钥 / UUID、SOCKS5 账号等其他协议专属逻辑 |
+
+下面是**旧测试机历史摘要**：
+
+[**完整实测记录：2026-11-04 Debian 13**](tests/REAL_MACHINE_ACCEPTANCE_2026-11-04.md)详细列出每个步骤、通过依据和未测试项。实测包括：普通临时节点及双向配额、来源 IP 上限、到期清理；一次真正发现的**首次关机配额持久化问题**（已通过 [首次关机保存修复](https://github.com/liucong552-art/hy2jieshu/commit/893bb2dc25cc96bd7076849385d79ebefd730952) 修复）；WG-NAT 客户端真实出口、断线阻断、恢复及整机重启后配额保留。
 
 收尾时 `hy2_doctor.sh --strict` 为 **0 错误、1 警告**；警告是未设置 Hysteria 二进制 SHA256 校验。NAT 节点刚启动时允许因 WG 握手未就绪而安全拒绝监听，随后自动重试成功；不应把这一启动时序当作持续故障。
 
@@ -1269,10 +1320,10 @@ bash /root/portbw-install.sh rollback
 
 [**完整代码复用审计（2026-11-05）**](tests/SHARED_COMPONENT_AUDIT_2026-11-05.md)：精确 Git Blob SHA、NAT/WG 差异、端口统计与配额适配，以及哪些验收不需要重复。两个项目始终分机部署，技术审计中提到的同机路径冲突**不是本项目的发布阻塞项**。
 
-| 功能 | `ceshi` 当前状态 | 推荐处理 |
+| 功能 | `hy2jieshu` 当前状态 | 推荐处理 |
 |---|---|---|
-| Hysteria 2 主/临时节点、配额、IP 限制、到期管理 | 已有；主要路径已实测 | 维持稳定 |
-| WG-NAT 出口、防泄漏与 VPS 重启恢复 | 已有；本次实测 | 不盲目覆盖 WG 脚本 |
+| Hysteria 2 主/临时节点、配额、IP 限制、到期管理 | 已实现；旧主机主要路径有证据，本轮另记 | 维持稳定 |
+| WG-NAT 出口、防泄漏与 VPS 重启恢复 | 已有；旧主机实测 | 不盲目覆盖 WG 脚本 |
 | 按端口每日流量历史统计与导出 | **已移植并真机验证**：HY2 UDP 双向字节、原配额一致、正常重启前后保留且 0 字节重复计数 | 剩余：跨北京时间午夜、突然断电、30 天裁剪及端口复用 |
 | 静态端口限速、持续流量高峰自动降速（`portbw`） | **两个仓库的 `portbw.py` / `portbw-install.sh` Git Blob SHA 完全相同**；`jieshu` README 记录 Helan 实际上传/下载触发与恢复，HY2 本机通过静态测速和自动策略空闲生命周期 | **直接继承已验收的通用内核限速算法**；额外 HY2 全链路高负载仅作可选集成测试，不再强制重复 |
 | 端口暂停、来源 IP/CIDR 黑名单 | **真机通过**：端口暂停/恢复、来源 IP `/32` 和 CIDR `/24` 封禁/解封；独立 nft 表正常重启持久化，HY2/WG 均正常 | 尚待补充异常断电、过期端口生命周期等边界测试 |
@@ -1280,140 +1331,36 @@ bash /root/portbw-install.sh rollback
 | NAT 端 `probe-once` / `probe-enable` / `probe-disable` / `probe-status` | 既有 `jieshu` NAT 与 Peer 探测由操作者确认已真机验收；HY2 版本复制了相同机制但管理前缀不同 | **直接复用 `jieshu` NAT，不部署 HY2 NAT 管理器，不重复 Peer 验收**；NAT 实际冷重启属于单独破坏性测试 |
 | SOCKS5 账号、VLESS Reality 特定管理 | 不属于 HY2 五文件版 | 不应直接照搬 |
 
-`vpswg.sh` 也已是对 `jieshu/vpswg.sh` 的 HY2 适配版：大部分代码相同，但临时节点目录、锁和旧标记切换时的 fail-closed 保护不能直接替换回 VLESS 版本。本轮已在 jieshu 的 VPS WG 配置与 HY2 节点组合下完成真实出口、断线阻断和 VPS 重启恢复；不代表所有版本混用都受支持。
+`vpswg.sh` 也已是对 `jieshu/vpswg.sh` 的 HY2 适配版：大部分代码相同，但临时节点目录、锁和旧标记切换时的 fail-closed 保护不能直接替换回 VLESS 版本。历史测试已在 jieshu 的 VPS WG 配置与 HY2 节点组合下完成真实出口、断线阻断和 VPS 重启恢复；新机出口联调仍须实际验证，不代表所有版本混用都受支持。
 
-对标目标是达到类似的管理体验和验证标准，不承诺把其他协议模块直接塞进 HY2。新增功能都应独立 PR、CI 和指定真机测试。
+对标目标是达到类似的管理体验和验证标准，不承诺把其他协议模块直接塞进 HY2。新增或修改的行为须完成相应 CI 与必要真机回归，未验证项保持明确状态。
 
-### 一键批量真机回归（仅 `helan` 测试机）
+<details>
+<summary>历史验收与旧测试工具（旧主机，不代表当前 VPS）</summary>
 
-以前每项单独复制命令的验收方式已新增自动化：`tests/hy2_batch_acceptance.py`。在 **Debian 13 测试机 `helan`**、root 下运行一次，即可自动完成既有服务、doctor、systemd timers、北京时间流量 JSON、WG 打标路由、只读异常审计，以及一枚**新生成、独立、随机名**的 NAT 临时节点的端口 pause/resume、文档 IP `/32` 与 CIDR `/24` 封禁/解封、nft guard `restore`、30 天周期配额保持测试与资源清理。源 IP 封禁只使用 `198.51.100.7/32` 和 `203.0.113.0/24` 文档保留网段，不封真实客户端。普通业务节点不作变更。
+- [2026-11-04 至 2026-11-05 原始验收记录](tests/REAL_MACHINE_ACCEPTANCE_2026-11-04.md)：旧主机真实客户端、配额、IP 限制、WG-NAT、防泄漏与正常重启。
+- [共享组件复用依据](tests/SHARED_COMPONENT_AUDIT_2026-11-05.md)：同源码 portbw、NAT 适用条件及 HY2 专属差异。
+- [旧批次工具与执行说明](docs/LEGACY_ACCEPTANCE_GUIDE.md)：保留旧 `helan` 的 12 / 9 / 14 / 6 项批次结果、失败后修复与清理记录。批次中重复的健康检查不计为独立功能数量。
 
-```bash
-curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/tests/hy2_batch_acceptance.py \
-  -o /root/hy2_batch_acceptance.py && \
-python3 -m py_compile /root/hy2_batch_acceptance.py && \
-python3 /root/hy2_batch_acceptance.py --live
-```
+旧工具具有主机保护和 WG-NAT 前提；不要为了在新机凑出 PASS 而改掉保护、跳过依赖或替换断言。缺少外部 NAT、全球 IPv6 或真实客户端时，相应场景须记为未验证。
 
-完成后终端打印各项 `PASS` / `FAIL` / `SKIP`、`FINAL_RESULT`、`CLEANUP` 和本次 `/root/hy2-batch-accept-*/report.json` 的准确路径。**仅分享该脱敏 JSON 报告**，不要上传测试目录内的 `*.raw.log`：创建日志包含测试节点密码和 HY2 链接。测试器退出时自动清理节点和专用 nft 规则；同时在运行前先安装**跨重启仍有效、30 分钟后执行一次**的 systemd cleanup 安全计时器。正常清理成功时连同计时器一并移除；遇到清理错误时保留计时器兜底，终端会提示。根目录下仅留脱敏报告和 root 私有原始审计日志。
-
-不带 `--live` 时仅执行只读自检，不会创建节点：`python3 /root/hy2_batch_acceptance.py`。脚本明确拒绝在非 `helan` 的机器上执行，且从未自动重启 VPS、NAT 出口机或 WireGuard。自动化规则检查**不能替代**前面已完成的 v2rayN 真实断网/恢复证据；异常断电、真实 30 天事件、IPv6 与跨机故障注入仍需单独隔离验收。本脚本 GitHub Actions 单元测试通过并不等于实际 VPS 验收，须以脚本在真实 `helan` 的 `report.json` 为准。
-
-**2026-11-05 首次批量真机执行通过**：`helan` 控制台记录 12 项 PASS、0 FAIL，包含独立测试 NAT 节点创建、文档源网段封禁/解封、保留 30 天锚点的配额重设及自动删除；末尾 `FINAL_RESULT=PASS`、`CLEANUP=PASS`。此结论依据操作者控制台记录，未另行收取 `report.json` 本体，也不等同于客户端断网测试或重启故障注入。
-
-
-### 第二轮一键自动维护验收（`--maintenance`）
-
-和第一轮 `--live` 不同，第二轮集中检验 **节点真实到期清理、Watchdog 健康巡检与 `portbw` 自动限速策略的空闲态配置/审计/撤销**，而不是重复已经验收过的暂停、配额重设。
-
-在 **仅允许 `helan` 的测试机**用下面一条命令运行：
-
-```bash
-curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/tests/hy2_batch_acceptance.py \
-  -o /root/hy2_batch_acceptance.py && \
-python3 -m py_compile /root/hy2_batch_acceptance.py && \
-python3 /root/hy2_batch_acceptance.py --maintenance
-```
-
-此模式先完成主服务、doctor、WG、guard 和 timer 预检，再建立 **180 秒有效期**的随机 HY2-NAT 临时节点，检查仅健康状态下的 Watchdog 巡检、尝试对其配置 `portbw auto` 基础 5/5 Mbps 与降速 2/2 Mbps 并做 audit/status/off/del，最后**等待真实 TTL 到期、服务和配额/IP 限制元数据自然清理**。所有创建动作前均安装 30 分钟后的一次性、跨重启持久安全清理 timer；失败或退出时立即强制清理本次拥有的资源。一次自然到期通常需等待约 3 分钟；若没能自然清理则记为 FAIL，不会将强制清理冒充通过。此模式绝不主动停止主服务或 WireGuard、不改生产机。
-
-**测试范围界限：** Watchdog 只在没有其他临时节点时主动跑健康巡检，有其他节点会 SKIP，以免触碰其他测试或业务；故障恢复/连续三次失败后 72 小时宽限的真实故障注入**不在这轮**。`portbw` 仅在已安装、tc 模式启用、监控服务运行、且无其他受管端口策略的安全前提下执行；否则 SKIP，不会为了测试擅自安装或升级限速器。空闲态自动策略正常不等于**持续高流量真实触发降速与恢复已通过**；后者需单独受控压测。输出的 `report.json` 有每项 PASS/FAIL/SKIP 和清理状态，只分享脱敏 JSON，绝不分享 `*.raw.log` 或 HY2 节点链接。
-
-### 第三轮一键自动边界测试：双节点、配额隔离和端口复用
-
-第二轮已在 `helan` 通过 **9 项 PASS，0 FAIL，1 SKIP**：真实等待 180 秒节点自然到期，完成 portbw 空闲态自动策略配置、审计和撤销。Watchdog 健康扫描因现有其他临时节点被跳过，不计为通过；持续高流量降速、故障恢复仍需专项测试。
-
-**第三轮曾发现测试器误判，现已修复并复跑通过（2026-11-05）：** 首次 `--edges` 使用 20 分钟节点却套用了 31 天的周期断言，出现 `FINAL_RESULT=FAIL`，但 `CLEANUP=PASS`；PR #25 修复为按节点期限判定。修复后在 `helan` 真机重新运行，得到 **14 PASS、0 FAIL、0 SKIP、`CLEANUP=PASS`**。旧失败结果保留用于回归记录。
-
-第三轮现在提供 `--edges` 模式，**仅限 `helan` 测试机**，自动创建两个新随机命名 HY2-NAT 节点 A/B，核对它们有不同 UDP 端口、独立 `hy2_pq` 配额与 `hy2_iplimit` 来源槽位规则、各自每日统计 JSON；暂停 A 后确认 B 没有被暂停，重设 A 配额后检查 B 的配额所有权、额度与 30 天锚点没变；强制删除 A，检查 A 的配额/IP 限制元数据和 nft 对象都消失、B 仍存活；最后使用旧端口创建 C 并确认新配额/所有权，最终删除 C/B/A、检查系统状态。只测试服务端规则与节点隔离，**不伪称两个客户端同时在线、真实用户流量竞争或 IPv6 连接已验证**。
-
-```bash
-curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/tests/hy2_batch_acceptance.py \
-  -o /root/hy2_batch_acceptance.py && \
-python3 -m py_compile /root/hy2_batch_acceptance.py && \
-python3 /root/hy2_batch_acceptance.py --edges
-```
-
-此模式执行任何新建操作之前就启动 **3 个分属 A/B/C 的跨重启一次性 30 分钟安全清理 timer**。测试失败立即尝试清理，仅在对应节点和 nft 测试对象清洁后撤销该节点 timer，失败则保留定时兜底。它不会停止 HY2 主节点、重启 WG、操作生产机，也不会对其他测试节点执行删除；其他临时节点即使存在也不应影响本批次归属校验。完成后只分享 `report.json` 或其无敏感字段的汇总输出，**不要发原始 HY2 配置/URL、`*.raw.log`**。
-
-### 常规收尾与剩余条件一键盘点
-
-**第三轮修复后首次真机复跑已通过**（2026-11-05）：`--edges` 共 14 项 PASS、0 FAIL、0 SKIP、`CLEANUP=PASS`；A/B 并行节点、配额和 IP_LIMIT 隔离、A 删除、C 复用旧端口、最后 A/B/C 自动清理。原先短期周期误判由 PR #25 修复，不能再沿用“第三轮尚未通过”的旧描述。
-
-在 **`helan`** 运行下面这条**只读**命令后，可立即生成汇总报告和剩余项目清单，不重新创建任何测试节点，也不会停止或重启服务：
-
-```bash
-curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/tests/hy2_release_gate.py \
-  -o /root/hy2_release_gate.py && \
-python3 -m py_compile /root/hy2_release_gate.py && \
-python3 /root/hy2_release_gate.py
-```
-
-输出 `ROUTINE_GATE=PASS` 仅说明 **当前健康审计成功、且本机保存的 `--live`/`--maintenance`/`--edges` 三类批次曾成功并且清理完成**，不代表所有生产故障场景均通过。脚本读取 root 私有汇总文件、不分享原始 HY2 链接，写出脱敏的 `/root/hy2-release-gate-report.json`。有现存临时节点时不修改它们，也不会清理任何用户节点。
-
-下一步**不重复常规功能回归**，仅安排三项专项：Watchdog 故障注入与恢复、portbw 实际高流量降速/恢复、NAT 端 Peer 探测；IPv6 仅在确认有全球 IPv6 和正确 AAAA 记录时测试。真实 30 天重置、证书轮换、异常断电属于持续或破坏性专项，应保持单独验收状态，不阻止已经通过的常规功能得到明确的结果。
-
-
-### 第四轮加速专项：两台机器分别一条命令（不重复核心回归）
-
-**A. 测试 VPS `helan`：真实 Watchdog 服务恢复。** 新 `--recovery` 模式仅在**没有其他受管临时节点**时才新建独立 `D=1200` HY2-NAT 临时节点，提前安装跨重启 30 分钟自动清理保护，人工故障注入被自动化为**只停止新测试节点的 systemd 服务**；验证实际停止状态后，启动受管理 Watchdog 并核对监听重新启动、配额/IP_LIMIT 防护、WG 和主 HY2 健康，最后删除临时资源。不会停止主节点、WG 服务、NAT 出口机或生产机；有其他临时节点则明确 SKIP，不强制破坏现存节点。
-
-```bash
-curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/tests/hy2_batch_acceptance.py \
-  -o /root/hy2_batch_acceptance.py && \
-python3 -m py_compile /root/hy2_batch_acceptance.py && \
-python3 /root/hy2_batch_acceptance.py --recovery
-```
-
-**2026-11-05 真机补充：Watchdog 已通过 6 项 PASS、0 FAIL、0 SKIP、`CLEANUP=PASS`。** `helan` 上独立临时节点真实停止后，受管 Watchdog 成功重启并恢复；不会再把这一条当作待验证。**仍未验收**连续三次失败后的 72 小时宽限、底层 nft 全表清空或异常断电。
-
-**B. NAT 出口复用（不需要另装 HY2 NAT，也不重复已验收的 `jieshu` NAT）。** `jieshu/nat.sh` 与 `ceshi/nat.sh` 都以 WireGuard `wg-exit` + 默认 UDP/51820、NAT 端 `10.66.66.2/24`、IPv4 FORWARD/MASQUERADE 提供无关应用层协议的出口。现有 `jieshu` 出口已由操作者独立验收，`helan` 的 HY2 NAT 出口/断流阻断/恢复也已有真机证据，**不必重装、不必迁移、不必为了 HY2 重做 Peer 探测**。多 VPS 接入时，每台 VPS 的 WireGuard 公钥与地址（Peer 的 `AllowedIPs`）必须唯一，NAT 出口管理员须保证 Peer 映射正确。
-
-两个项目的**管理脚本不完全相同**：`jieshu` 的 Worker/Timer 前缀为 `vr_wg_peer_probe.sh`、`vr-wg-...`，HY2 的为 `hy2_wg_peer_probe.sh`、`hy2-wg-...`。请勿在已部署 `jieshu` 的 NAT 机器上用 HY2 的 `nat.sh init/add` 代替现存实现，这类动作可能重启整个 WG，影响共享 Peer。
-
-仓库保留 `tests/hy2_nat_peer_acceptance.py` 仅供**确有需要时**额外排查：已经改为**默认只读**，可识别这两个管理器前缀，只核对既有 Peer 文件、运行时 AllowedIPs 和 Timer 状态，**绝不启停或覆盖原有定时器**。显式指定 `--probe` 才对已安装 Worker 发送一包探测，且不写入 systemd 单元；`WG_PROBE_SENT` 不表示远端新握手成功。现有 NAT 已验收时不需要再执行这项可选检查。
-
-**C. 通用 portbw 限速引擎不需要再次从头压测。** `jieshu` 上游已记录同一源码在 Helan 实测上/下行自动触发和恢复；HY2 与其 `portbw.py`、安装器及两份核心测试文件 Git Blob SHA 均一致，且 HY2 已通过本机限速配置/审计生命周期。**只有用户明确要求证明特定 HY2 链接的端到端持续吞吐**时，才额外安排受控客户端压力测试；不能在当前报告里冒充那项已经实测，也不能把它作为重复的常规发布门槛。
-
-### 仍需后续实测的场景
-
-下面是完整参考验收清单，**并非 12 项都已完成**；IPv6、30 天周期、NAT 机本身重启、真实续证、核心升级回滚、异常断电及 nftables 全表冲刷均未做完。
-
-建议先在一台全新 HY2 VPS 和一台全新 NAT VPS 测试：
-
-1. `hy2_doctor.sh --strict` 无错误
-2. 主节点能导入 v2rayN 并连接
-3. 主节点出口 IP 是 HY2 VPS
-4. 普通临时节点能连接并按时间自动删除
-5. 达到 `PQ_GIB` 后端口停止转发
-6. 超出 `IP_LIMIT` 后新来源 IP 被拒绝
-7. IPv6 临时节点可连接，IPv4/IPv6 不串入
-8. WG-NAT 临时节点出口 IP 是 NAT 机
-9. 停止 `wg-quick@wg-nat` 后，NAT 节点断流且不泄漏 VPS 本机出口
-10. 清空 HY2 nftables 表后，watchdog 能恢复或停止节点
-11. HY2 VPS 与 NAT 机重启后，Peer、路由、配额和临时节点状态恢复
-12. 模拟证书续期后，主节点和未到期临时节点正常重载
+</details>
 
 ### 适用边界与安全
 
 - 只面向全新机器
 - 不迁移旧 Hysteria、旧 WireGuard 或旧 nftables 状态
 - 主节点固定为 IPv4 UDP `443`
-- 不提供一键卸载命令
+- 卸载前先备份所需配置及统计，按[卸载说明](#uninstall)执行
 - 不应与其他会频繁重建相同 nftables、iptables 或策略路由的管理脚本混用
-- 在真实生产使用前，必须完成上一节的真机验收
+- 投入业务前，验证当前机器的真实客户端连接与所用保护组件；长期专项按报告保留状态
 
 仅在自己拥有或已获明确授权的服务器和网络上使用，并遵守当地法律和服务商条款。
 
 - 本次只验证 Debian 13 的指定服务器与客户端条件，不代表所有系统和网络已通过。
 - 任何 `hy2://` 链接及 `/etc/wireguard` 密钥均视为敏感凭据，不应放入 GitHub、公开问题单或原始验收日志；公开记录采用匿名摘要。
-- 临时节点到期自动回收。此次 UDP/40020 是限时测试节点，正式服务应重新生成节点及凭据并设定实际 TTL。
+- 临时节点到期自动回收；文中 `40020` 等均为示例端口，需换成实际端口并确认节点归属。
 
 ---
 
-`ceshi` README 列出核心 HY2 命令与可选独立 `portbw` 模块；未实现的 `jieshu` 功能不会伪装为已安装命令。
+全部安装命令从 `liucong552-art/hy2jieshu` 下载。SOCKS5 账号与 VLESS Reality 密钥等协议专属功能不属于 HY2；共享的配额、统计和限速也须使用本仓库对应入口。

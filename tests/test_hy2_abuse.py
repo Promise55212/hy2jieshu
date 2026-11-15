@@ -1,10 +1,13 @@
 """The HY2 abuse utility must never invent history or disclose auth secrets."""
 import importlib.util
+import io
 from pathlib import Path
 import json
 import subprocess
+import stat
 import tempfile
 import unittest
+import types
 from unittest import mock
 
 FILE = Path(__file__).resolve().parents[1] / "hy2-abuse.py"
@@ -95,6 +98,31 @@ class AbuseTest(unittest.TestCase):
         for word in ("nft flush ruleset", "iptables -F", "hy2-guard ban",
                      "sudo nft", "wg-quick down"):
             self.assertNotIn(word, body)
+
+    @mock.patch.object(ab.os, "O_NOFOLLOW", 0x20000, create=True)
+    @mock.patch.object(ab.os, "O_NONBLOCK", 0x800, create=True)
+    def test_stats_secret_checks_open_file_owner_and_permissions(self):
+        for uid, mode in ((1000, 0o600), (0, 0o640), (0, 0o644)):
+            with self.subTest(uid=uid, mode=mode), \
+                 mock.patch.object(ab.os, "open", return_value=123), \
+                 mock.patch.object(ab.os, "fstat", return_value=types.SimpleNamespace(
+                     st_uid=uid, st_mode=stat.S_IFREG | mode)), \
+                 mock.patch.object(ab.os, "close") as close:
+                with self.assertRaises(ab.AuditError):
+                    ab.read_api_secret("/root/stats-secret")
+                close.assert_called_once_with(123)
+
+    @mock.patch.object(ab.os, "O_NOFOLLOW", 0x20000, create=True)
+    @mock.patch.object(ab.os, "O_NONBLOCK", 0x800, create=True)
+    def test_stats_secret_never_discloses_invalid_header(self):
+        secret = "PRIVATE_SECRET\nINTERNAL_LINE"
+        with mock.patch.object(ab.os, "open", return_value=123), \
+             mock.patch.object(ab.os, "fstat", return_value=types.SimpleNamespace(
+                 st_uid=0, st_mode=stat.S_IFREG | 0o600)), \
+             mock.patch.object(ab.os, "fdopen", return_value=io.StringIO(secret)):
+            with self.assertRaises(ab.AuditError) as raised:
+                ab.read_api_secret("/root/stats-secret")
+        self.assertNotIn("PRIVATE_SECRET", str(raised.exception))
 
 
 if __name__ == "__main__":

@@ -248,10 +248,10 @@ def cli():
     parser = argparse.ArgumentParser(
         description="HY2 independent port pause and source IP/CIDR blacklist")
     choices = parser.add_subparsers(dest="command", required=True)
-    for command in ("pause", "resume", "clear", "status", "audit",
+    for command in ("pause", "resume", "clear", "forget", "status", "audit",
                     "restore", "install"):
         p = choices.add_parser(command)
-        if command in ("pause", "resume", "clear"):
+        if command in ("pause", "resume", "clear", "forget"):
             p.add_argument("port")
     for command in ("ban", "unban"):
         p = choices.add_parser(command)
@@ -282,6 +282,11 @@ def cli():
         elif args.command == "resume":
             state["paused"] = [p for p in state["paused"] if p != port]
         elif args.command == "clear":
+            state["bans"].pop(str(port), None)
+        elif args.command == "forget":
+            # Node deletion must not leave a ban/pause on a recycled UDP
+            # port. Unlike pause/ban, removing stale state needs no owner.
+            state["paused"] = [p for p in state["paused"] if p != port]
             state["bans"].pop(str(port), None)
         elif args.command in ("ban", "unban"):
             address = network(args.network)

@@ -2,7 +2,7 @@
 
 > **适用场景：** 以后换一台全新、独立的 Debian 11+ / Ubuntu 20.04+ VPS 安装 HY2。推荐 Debian 13（已在 helan 测试过核心路径）。**不从 helan 迁移任何数据**；不复制其 HY2 URL、密码、WireGuard 私钥、配额、日志或测试临时节点。已验收的 jieshu 项目仓库和现有 NAT 服务保持原样。
 >
-> **发布边界：** 这份手册及其 CI 契约已校验，但**本轮未在新的空白 VPS 上重新执行真实 ACME 签证/完整端到端安装**；helan 的通过记录不能冒充另一台全新机器上的运行结果。首次上新 VPS，仍需做一次基础联网、TLS 和真实客户端冒烟检查；**不重复** jieshu NAT、portbw 共有算法或 72 小时/30 天专项测试。
+> **发布边界：** 手册和 CI 契约不是目标机器的真实验收；`helan` 的通过记录不能冒充另一台全新机器上的运行结果。本轮 2026-11-15 新 Debian 13 VPS 的执行状态见 [TASK_PROGRESS.md](../TASK_PROGRESS.md) 及其中链接的当次验收报告。首次上新 VPS，仍需做一次基础联网、TLS 和真实客户端冒烟检查；**不重复** jieshu NAT、portbw 共有算法或 72 小时/30 天专项测试。
 
 ## 一、准备（仅在新 HY2 VPS）
 
@@ -17,7 +17,7 @@
 ```bash
 apt-get update && apt-get install -y curl ca-certificates iproute2
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/scripts/hy2_fresh_preflight.sh \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/scripts/hy2_fresh_preflight.sh \
   -o /root/hy2_fresh_preflight.sh
 bash -n /root/hy2_fresh_preflight.sh && bash /root/hy2_fresh_preflight.sh before
 ```
@@ -28,7 +28,7 @@ bash -n /root/hy2_fresh_preflight.sh && bash /root/hy2_fresh_preflight.sh before
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/hy2.sh \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2.sh \
   -o /root/hy2.sh
 chmod 700 /root/hy2.sh
 bash -n /root/hy2.sh && bash /root/hy2.sh install
@@ -57,13 +57,13 @@ hy2_doctor.sh --strict
 
 ## 四、复用现成 jieshu NAT 出口（可选、只为需要 NAT 的 HY2 临时节点）
 
-**已有 NAT 机绝对不需要下载或运行 `ceshi/nat.sh`，尤其不得执行 `init`；不重新安装 NAT，也不覆盖 `jieshu` 管理器。** 现成 NAT 服务继续使用原版 jieshu `/root/nat.sh` 和它管理的 `wg-exit`、Peer 探测 timer。
+**已有 NAT 机绝对不需要下载或运行 `hy2jieshu/nat.sh`，尤其不得执行 `init`；不重新安装 NAT，也不覆盖 `jieshu` 管理器。** 现成 NAT 服务继续使用原版 jieshu `/root/nat.sh` 和它管理的 `wg-exit`、Peer 探测 timer。
 
 **在新 HY2 VPS**（不是 NAT 机）：
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/vpswg.sh \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/vpswg.sh \
   -o /root/vpswg.sh
 chmod 700 /root/vpswg.sh
 bash -n /root/vpswg.sh && bash /root/vpswg.sh
@@ -85,7 +85,7 @@ bash /root/nat.sh list
 ```bash
 /usr/local/sbin/wg_nat_healthcheck.sh
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/natjichang.sh \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/natjichang.sh \
   -o /root/natjichang.sh
 chmod 700 /root/natjichang.sh
 bash -n /root/natjichang.sh && bash /root/natjichang.sh
@@ -105,10 +105,10 @@ bash /root/hy2_fresh_preflight.sh wg
 ```bash
 apt-get update && apt-get install -y curl ca-certificates python3 iproute2 nftables util-linux coreutils procps
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/portbw-install.sh \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw-install.sh \
   -o /root/portbw-install.sh
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/portbw.py \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw.py \
   -o /root/portbw.py
 bash -n /root/portbw-install.sh
 bash /root/portbw-install.sh check &&
@@ -123,7 +123,7 @@ portbw audit
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/ceshi/main/traffic.py \
+  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/traffic.py \
   -o /root/hy2_traffic.py
 python3 -m py_compile /root/hy2_traffic.py &&
 python3 /root/hy2_traffic.py --install
@@ -146,4 +146,4 @@ hy2_traffic main
 4. NAT 与通用 portbw 的原有真机验收直接继承 `jieshu`，新 VPS 仅验证**新 Peer 的连通**及新服务进程状态，不重新部署 NAT、不重复压测同一算法。
 5. IPv6、真实 30 天自动到期重置、完整 72 小时宽限、证书实际轮换和异常断电保留为条件性/长期专项，不能由常规部署检查冒充已验证。
 
-**全程没有数据迁移要求：新 VPS 生成新凭据；测试机 `helan` 的运行数据不需要保留。** 是否删除或关停 `helan` 是服务器管理员自己的后续操作，本手册不提供自动删除、重装或远程清理命令。
+**全程没有数据迁移要求：新 VPS 生成新凭据。** 旧测试机 `helan` 的运行数据不用于新机安装，旧机是否删除或关停由管理员决定。需要卸载当前 HY2 时，按 [README 的卸载说明](../README.md#uninstall)先预览、备份，再选择保留数据或 `--purge`；不把卸载命令用于另一台已有共享 NAT 出口机。

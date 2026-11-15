@@ -59,6 +59,49 @@ class NatProbeContract(unittest.TestCase):
         self.assertNotIn('vr-wg-${WG_IF}-peer-probe', self.source)
         self.assertNotIn('vr_wg_peer_probe.sh', self.source)
 
+    def test_clean_host_installs_and_checks_probe_dependency(self):
+        body = re.search(r'(?ms)^need_packages\(\)\{\n(.*?)^\}', self.source).group(1)
+        shell = '''set -e
+fail() { exit 23; }
+apt-get() { :; }
+apt_install_with_universe_retry() {
+  [[ " $* " == *" iputils-ping "* ]] || exit 24
+}
+command() { [[ "$2" != ping || "$PING_AVAILABLE" == yes ]]; }
+need_packages() {
+''' + body + '\n}\nneed_packages\n'
+        for available, expected in [('yes', 0), ('no', 23)]:
+            with self.subTest(ping_available=available):
+                result = subprocess.run(['bash', '-c', 'PING_AVAILABLE=' + available + '\n' + shell],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_add_dispatch_preserves_legacy_explicit_address(self):
+        body = self.source.split('main(){', 1)[1].split('    add)\n', 1)[1].split('    del)', 1)[0]
+        shell = '''set -e
+warn() { :; }
+fail() { exit 23; }
+cmd_add() { printf '%s\\n' "$@"; }
+dispatch() {
+case "$1" in
+add)
+''' + body + 'esac\n}\ndispatch "$@"\n'
+        cases = [
+            (['add', 'node', 'example.com', 'public-key'],
+             ['node', 'example.com', 'public-key']),
+            (['add', 'node', 'example.com', '10.66.66.3/32', 'public-key'],
+             ['node', 'example.com', 'public-key', '10.66.66.3/32']),
+        ]
+        for args, expected in cases:
+            with self.subTest(args=args):
+                result = subprocess.run(['bash', '-c', shell, '--'] + args,
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), expected)
+        result = subprocess.run(['bash', '-c', shell, '--', 'add', 'node'],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 23)
+
 
 if __name__ == "__main__":
     unittest.main()

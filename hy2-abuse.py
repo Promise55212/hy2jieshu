@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 from urllib import request, parse
@@ -184,6 +185,28 @@ def api_json(url, secret, endpoint):
     return json.loads(body)
 
 
+def read_api_secret(path):
+    # Inspect the opened descriptor, not an earlier path lookup: accepting a
+    # root-readable but user-owned file contradicts the root-private contract.
+    # O_NOFOLLOW also prevents replacing it with a symlink during this read.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise AuditError("Stats API secret 必须是 root 所有、权限 600/400 的普通文件")
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = None
+            secret = handle.read(4097).strip()
+        # Invalid header errors can include the header value in their text;
+        # validate privately before passing the secret to urllib.
+        if len(secret) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in secret):
+            raise AuditError("Stats API secret 过长或包含控制字符")
+        return secret
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def target_label(text):
     # Only display actual recorded destinations, not guessed DNS/domain names.
     if not isinstance(text, str) or not text or len(text) > 256:
@@ -240,10 +263,7 @@ def main():
         url = secure_api_url(args.stats_url)
         secret = ""
         if args.secret_file:
-            file = Path(args.secret_file)
-            if not file.is_file() or file.stat().st_mode & 0o077:
-                raise AuditError("Stats API secret 文件不存在或权限过宽；必须 root 私有")
-            secret = file.read_text(encoding="utf-8").strip()
+            secret = read_api_secret(args.secret_file)
         result["api"] = stats(url, secret)
     elif args.secret_file:
         raise AuditError("--secret-file 必须与 --stats-url 同用")

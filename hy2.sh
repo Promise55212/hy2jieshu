@@ -3777,6 +3777,24 @@ if [[ "$PORT" =~ ^[0-9]+$ ]]; then
     echo "❌ iplimit:${PORT} 清理失败；保留元数据以便重试" >&2
     exit 1
   fi
+  # Optional independent bans/pauses belong to this node too. Remove them
+  # before dropping metadata, otherwise a recycled port inherits its bans.
+  if [[ -f /var/lib/hy2/manual-guard/state.json ]]; then
+    if [[ ! -x /usr/local/sbin/hy2-guard ]] \
+      || ! /usr/local/sbin/hy2-guard forget "$PORT" >/dev/null; then
+      echo "❌ manual-guard:${PORT} 清理失败；保留元数据以便重试" >&2
+      exit 1
+    fi
+  fi
+  # portbw is shared, but a policy on this managed node's port must not be
+  # inherited by its next user. Delete only this saved per-port policy.
+  if [[ -e "/var/lib/portbw/ports/${PORT}.json" || -L "/var/lib/portbw/ports/${PORT}.json" ]]; then
+    if [[ ! -x /usr/local/sbin/portbw ]] \
+      || ! /usr/local/sbin/portbw del "$PORT" >/dev/null; then
+      echo "❌ portbw:${PORT} 清理失败；保留元数据以便重试" >&2
+      exit 1
+    fi
+  fi
 fi
 
 rm -f "$STOPPOST_BYPASS_FILE"
@@ -3824,11 +3842,16 @@ if (( ${#TAGS[@]} == 0 )); then
   exit 0
 fi
 
+CLEANUP_RC=0
 for tag in "${TAGS[@]}"; do
   [[ -n "$tag" ]] || continue
-  FORCE=1 HY2_TEMP_LOCK_HELD=1 /usr/local/sbin/hy2_cleanup_one.sh "$tag" || true
+  FORCE=1 HY2_TEMP_LOCK_HELD=1 /usr/local/sbin/hy2_cleanup_one.sh "$tag" || CLEANUP_RC=1
 done
 
+if (( CLEANUP_RC != 0 )); then
+  echo "❌ 部分节点清理失败；保留元数据，请检查错误后重试" >&2
+  exit 1
+fi
 echo "✅ 所有临时 HY2 节点已清理。"
 EOF
   chmod 755 "${HY2_SBIN_DIR}/hy2_clear_all.sh"
