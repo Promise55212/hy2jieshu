@@ -638,7 +638,7 @@ journalctl -u hy2.service -n 50 --no-pager
 
 <a id="port-block"></a>
 
-**已实现**：`hy2-guard.py` 提供真正可持久化的整端口暂停 / 恢复与来源 IP/CIDR 黑名单，规则在独立 `inet hy2_manual_guard` 表中。不会修改 `hy2_pq`、`hy2_iplimit`、WireGuard、Hysteria 服务或其他端口；修改只允许作用于已登记的 HY2 主节点和临时节点，不允许误封 SSH 或其他服务端口。初次使用先完成下面的安装。
+**已实现**：`hy2-guard.py` 提供真正可持久化的整端口暂停 / 恢复与来源 IP/CIDR 黑名单，规则在独立 `inet hy2_manual_guard` 表中。不会修改 `hy2_pq`、`hy2_iplimit`、WireGuard、Hysteria 服务或其他端口；修改时仅校验端口属于已登记的 HY2 主节点或临时节点；规则按同一数字端口同时作用于 TCP 和 UDP，必须避免将 HY2 端口复用为 SSH 等管理端口，否则可能同时阻断管理连接。初次使用先完成下面的安装。
 
 ### 初次安装（HY2 VPS 执行）
 
@@ -902,7 +902,7 @@ cat /root/hy2_main_subscription_base64.txt
 HYSTERIA_FORCE_UPDATE=1 HYSTERIA_VERSION=vX.Y.Z bash /root/onekey_hy2_main_tls.sh
 ```
 
-确实需要官方当前稳定版时也可以指定 `HYSTERIA_VERSION=latest`。升级程序会预检候选核心、备份旧核心，在出错时尝试回滚；生产环境优先使用经过验收的确定版本和有效的 `HYSTERIA_BINARY_SHA256`。
+确实需要官方当前稳定版时也可以指定 `HYSTERIA_VERSION=latest`。升级程序会预检候选核心、备份旧核心，在出错时尝试回滚；只有文件、核心和原活跃服务恢复验证成功才报告完成。回滚失败会返回非零、记录失败步骤并保留私有备份路径，需按日志处理；生产环境优先使用经过验收的确定版本和有效的 `HYSTERIA_BINARY_SHA256`。
 
 </details>
 
@@ -1316,7 +1316,7 @@ bash /root/portbw-install.sh rollback
 
 普通与 NAT 两节点保留数据卸载/重装、注册的证书 reload hook、回环 Stats API 只读审计均完成真实客户端联调；两次整机重启中，普通及 NAT 精确流量/配额字节保留，NAT 握手后外部下载、上传与 UDP DNS 恢复通过。生产 NAT 未重启，临时 Peer、timer 与私有测试工具已清理，原两枚 Peer 及配置精确恢复。通用自动降速算法复用 `jieshu` 同源码证据。
 
-`--purge --remove-core` 的数据/核心移除、共享策略隔离与正式主节点新装已分别真机通过，最终Windows客户端出口正确，严格doctor为**0错误0警告**，审计退出0；安装的Hysteria2.14.0 Linux amd64核心与官方发布SHA256清单核对后固定。生产NAT及本机测试资源均已清理，最终保留主节点与可选工具，Linux166项测试通过。IPv6因本机无全局地址且域名无AAAA未测；实际72小时/30天、真实CA续证、核心升级失败回滚、异常断电和生产NAT重启未测。证书reload hook成功不等于真实续证已经发生。完整功能对标表与限制见[本轮报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)。
+`--purge --remove-core` 的数据/核心移除、共享策略隔离与正式主节点新装已分别真机通过，最终Windows客户端出口正确，严格doctor为**0错误0警告**，审计退出0；安装的Hysteria2.14.0 Linux amd64核心与官方发布SHA256清单核对后固定。生产NAT及本机测试资源均已清理，最终保留主节点与可选工具，Linux166项测试通过。IPv6因本机无全局地址且域名无AAAA未测；实际72小时/30天、真实CA续证、跨版本及运行期失败升级回滚、异常断电和生产NAT重启未测；接续已补充SHA拒绝后回滚的真机通过记录。证书reload hook成功不等于真实续证已经发生。完整功能对标表与限制见[本轮报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)。
 
 | 状态 | 判定依据 |
 |---|---|

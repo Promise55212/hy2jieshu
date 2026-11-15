@@ -2369,40 +2369,80 @@ begin_transaction() {
 rollback_transaction() {
   (( TX_ACTIVE == 1 )) || return 0
   TX_ACTIVE=0
-  set +e
   trap '' INT TERM HUP
-  systemctl stop hy2.service >/dev/null 2>&1 || true
-  local path key
+  local path key restore_rc=0 old_temp_unit
+  if ! systemctl stop hy2.service >/dev/null 2>&1; then
+    # A failed first install can have no unit yet. Tolerate only that exact
+    # absence, never a stop failure for an originally active or known unit.
+    if (( OLD_SERVICE_ACTIVE == 1 )) \
+      || [[ "$(systemctl show -p LoadState --value hy2.service 2>/dev/null || true)" != not-found ]]; then
+      echo "❌ 主节点回滚：无法停止 hy2.service" >&2
+      restore_rc=1
+    fi
+  fi
   for path in "${TX_TARGETS[@]}"; do
     key="$(tx_key "$path")"
-    rm -f -- "$path"
     if [[ -f "${TX_DIR}/${key}.present" ]]; then
-      install -d -m 755 "$(dirname "$path")"
-      cp -a -- "${TX_DIR}/${key}" "$path"
+      if [[ ! -e "${TX_DIR}/${key}" && ! -L "${TX_DIR}/${key}" ]] \
+        || ! install -d -m 755 "$(dirname "$path")" \
+        || ! rm -f -- "$path" || ! cp -a -- "${TX_DIR}/${key}" "$path"; then
+        echo "❌ 主节点回滚：文件恢复失败 ${path}" >&2
+        restore_rc=1
+      fi
+    elif ! rm -f -- "$path"; then
+      echo "❌ 主节点回滚：新增文件移除失败 ${path}" >&2
+      restore_rc=1
     fi
   done
   if [[ -n "$HY2_CORE_NEW_BIN_PATH" ]]; then
     key="$(tx_key "$HY2_CORE_NEW_BIN_PATH")"
-    if [[ ! -f "${TX_DIR}/${key}.present" ]]; then
-      rm -f -- "$HY2_CORE_NEW_BIN_PATH"
+    if [[ ! -f "${TX_DIR}/${key}.present" ]] && ! rm -f -- "$HY2_CORE_NEW_BIN_PATH"; then
+      echo "❌ 主节点回滚：新核心移除失败 ${HY2_CORE_NEW_BIN_PATH}" >&2
+      restore_rc=1
     fi
   fi
-  systemctl daemon-reload >/dev/null 2>&1 || true
+  hash -r
+  rollback_systemctl() {
+    local detail status=0
+    detail="$(systemctl "$@" 2>&1)" || status=$?
+    if (( status != 0 )); then
+      printf '❌ 主节点回滚：systemctl %s 失败（exit=%s）：%s\n' "$*" "$status" "$detail" >&2
+      return "$status"
+    fi
+  }
+  rollback_systemctl daemon-reload || restore_rc=1
+  printf 'HY2_ROLLBACK_OLD_ENABLE_STATE=%q ACTIVE=%s\n' "$OLD_SERVICE_ENABLED" "$OLD_SERVICE_ACTIVE" >&2
   case "$OLD_SERVICE_ENABLED" in
-    enabled) systemctl enable hy2.service >/dev/null 2>&1 || true ;;
-    enabled-runtime) systemctl enable --runtime hy2.service >/dev/null 2>&1 || true ;;
-    masked) systemctl mask hy2.service >/dev/null 2>&1 || true ;;
-    masked-runtime) systemctl mask --runtime hy2.service >/dev/null 2>&1 || true ;;
-    *) systemctl disable hy2.service >/dev/null 2>&1 || true ;;
+    enabled) rollback_systemctl enable hy2.service || restore_rc=1 ;;
+    enabled-runtime) rollback_systemctl enable --runtime hy2.service || restore_rc=1 ;;
+    masked) rollback_systemctl mask hy2.service || restore_rc=1 ;;
+    masked-runtime) rollback_systemctl mask --runtime hy2.service || restore_rc=1 ;;
+    *) rollback_systemctl disable hy2.service || restore_rc=1 ;;
   esac
-  if (( OLD_SERVICE_ACTIVE == 1 )); then
-    systemctl restart hy2.service >/dev/null 2>&1 || true
+  # Do not start listeners against partially restored configuration or core.
+  if (( restore_rc == 0 )); then
+    if (( OLD_SERVICE_ACTIVE == 1 )); then
+      if ! hy2_restart_verify_managed_unit hy2.service; then
+        echo "❌ 主节点回滚：hy2.service 恢复/健康验证失败" >&2
+        restore_rc=1
+      fi
+    fi
+    for old_temp_unit in "${OLD_TEMP_ACTIVE_UNITS[@]}"; do
+      if ! hy2_restart_verify_managed_unit "$old_temp_unit"; then
+        echo "❌ 主节点回滚：${old_temp_unit} 恢复/健康验证失败" >&2
+        restore_rc=1
+      fi
+    done
   fi
-  local old_temp_unit
-  for old_temp_unit in "${OLD_TEMP_ACTIVE_UNITS[@]}"; do
-    timeout 60 systemctl restart "$old_temp_unit" >/dev/null 2>&1 || true
-  done
-  rm -rf -- "$TX_DIR"
+  if (( restore_rc != 0 )); then
+    echo "❌ 主节点回滚未完成；原始备份保留：${TX_DIR}" >&2
+    return 1
+  fi
+  if ! rm -rf -- "$TX_DIR"; then
+    echo "❌ 主节点已恢复，但备份清理失败：${TX_DIR}" >&2
+    return 1
+  fi
+  echo "✅ 主节点文件、核心与原活跃服务回滚验证通过" >&2
 }
 
 on_error() {
@@ -2415,7 +2455,9 @@ on_error() {
 on_exit() {
   local rc=$?
   trap - EXIT ERR
-  rollback_transaction || true
+  if ! rollback_transaction; then
+    (( rc != 0 )) || rc=1
+  fi
   exit "$rc"
 }
 trap 'on_error' ERR
@@ -2560,8 +2602,10 @@ PY
 hy2_managed_unit_port() {
   local unit="$1" tag meta port
   if [[ "$unit" == "hy2.service" ]]; then
-    hy2_main_port
-    return
+    hy2_main_port || return 1
+    # Bare return inherits the pre-trap failure status in Debian Bash's EXIT
+    # context, even though hy2_main_port just returned a valid port.
+    return 0
   fi
   tag="${unit%.service}"
   meta="$(hy2_temp_meta_file "$tag")"
@@ -2571,10 +2615,20 @@ hy2_managed_unit_port() {
 }
 
 hy2_restart_verify_managed_unit() {
-  local unit="$1" port
-  port="$(hy2_managed_unit_port "$unit")" || return 1
-  timeout 60 systemctl restart "$unit" >/dev/null 2>&1 || return 1
-  hy2_wait_unit_and_udp_port "$unit" "$port" 3 20
+  local unit="$1" port detail status=0
+  if ! port="$(hy2_managed_unit_port "$unit")"; then
+    echo "❌ 服务恢复：${unit} 的受管端口解析失败" >&2
+    return 1
+  fi
+  detail="$(timeout 60 systemctl restart "$unit" 2>&1)" || status=$?
+  if (( status != 0 )); then
+    printf '❌ 服务恢复：%s restart 失败（exit=%s）：%s\n' "$unit" "$status" "$detail" >&2
+    return "$status"
+  fi
+  if ! hy2_wait_unit_and_udp_port "$unit" "$port" 3 20; then
+    echo "❌ 服务恢复：${unit} UDP/${port} 未通过连续健康验证" >&2
+    return 1
+  fi
 }
 
 install_hysteria() {
@@ -2621,42 +2675,71 @@ install_hysteria() {
   fi
 
   restore_core_update() {
-    local restore_unit
-    set +e
+    local restore_unit restore_rc=0 backup_sha restored_sha
     if (( old_present == 1 )); then
-      if [[ -n "$new_bin" && "$new_bin" != "$old_bin_path" ]]; then
-        rm -f -- "$new_bin"
+      if [[ -n "$new_bin" && "$new_bin" != "$old_bin_path" ]] && ! rm -f -- "$new_bin"; then
+        restore_rc=1
       fi
-      install -m "$old_mode" "${core_tx}/hysteria.old" "$old_bin_path"
+      if ! install -m "$old_mode" "${core_tx}/hysteria.old" "$old_bin_path"; then
+        echo "❌ 核心回滚：旧核心写回失败 ${old_bin_path}" >&2
+        restore_rc=1
+      else
+        backup_sha="$(sha256sum "${core_tx}/hysteria.old" | awk '{print $1}')" || restore_rc=1
+        restored_sha="$(sha256sum "$old_bin_path" | awk '{print $1}')" || restore_rc=1
+        if [[ -z "$backup_sha" || "$backup_sha" != "$restored_sha" ]] \
+          || ! timeout 10 "$old_bin_path" version >/dev/null 2>&1; then
+          echo "❌ 核心回滚：旧核心哈希或执行检查失败" >&2
+          restore_rc=1
+        fi
+      fi
       hash -r
     elif [[ -n "$new_bin" ]]; then
-      rm -f -- "$new_bin"
+      rm -f -- "$new_bin" || restore_rc=1
       hash -r
     fi
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    for restore_unit in "${active_units[@]}"; do
-      timeout 60 systemctl restart "$restore_unit" >/dev/null 2>&1 || true
-    done
-    rm -rf -- "$core_tx"
+    systemctl daemon-reload >/dev/null 2>&1 || restore_rc=1
+    if (( restore_rc == 0 )); then
+      for restore_unit in "${active_units[@]}"; do
+        hy2_restart_verify_managed_unit "$restore_unit" || restore_rc=1
+      done
+    fi
+    if (( restore_rc != 0 )); then
+      echo "❌ 核心回滚未完成；原始备份保留：${core_tx}" >&2
+      return 1
+    fi
+    if ! rm -rf -- "$core_tx"; then
+      echo "❌ 核心已恢复，但备份清理失败：${core_tx}" >&2
+      return 1
+    fi
+  }
+
+  abort_core_update() {
+    local reason="$1"
+    if restore_core_update; then
+      if (( old_present == 1 )); then
+        hy2_die "${reason}；旧核心与原活跃服务已恢复并验证"
+      else
+        hy2_die "${reason}；新核心安装已撤销"
+      fi
+    else
+      hy2_die "${reason}；核心回滚未完成，检查保留备份：${core_tx}"
+    fi
   }
 
   if [[ -n "$local_binary" ]]; then
     echo "⚙ 使用本地二进制安装 Hysteria 2：${local_binary}"
     if ! HYSTERIA_USER=root bash "$installer" --local "$local_binary"; then
-      restore_core_update
-      hy2_die "使用本地 Hysteria 二进制安装失败"
+      abort_core_update "使用本地 Hysteria 二进制安装失败"
     fi
   else
     echo "⚙ 安装/升级 Hysteria 2（${version}）..."
     if [[ "$version" == "latest" ]]; then
       if ! HYSTERIA_USER=root bash "$installer"; then
-        restore_core_update
-        hy2_die "Hysteria 官方安装器执行失败"
+        abort_core_update "Hysteria 官方安装器执行失败"
       fi
     else
       if ! HYSTERIA_USER=root bash "$installer" --version "$version"; then
-        restore_core_update
-        hy2_die "Hysteria ${version} 安装失败"
+        abort_core_update "Hysteria ${version} 安装失败"
       fi
     fi
   fi
@@ -2665,20 +2748,17 @@ install_hysteria() {
   HY2_CORE_NEW_BIN_PATH="$new_bin"
   installed_bin="$new_bin"
   if [[ ! -x "$installed_bin" ]]; then
-    restore_core_update
-    hy2_die "未找到 hysteria 可执行文件"
+    abort_core_update "未找到 hysteria 可执行文件"
   fi
   if ! timeout 10 "$installed_bin" version >/dev/null 2>&1; then
-    restore_core_update
-    hy2_die "安装后的 Hysteria 无法执行"
+    abort_core_update "安装后的 Hysteria 无法执行"
   fi
   installed_owner="$(stat -c %u "$installed_bin" 2>/dev/null || echo -1)"
   installed_mode="$(stat -c %a "$installed_bin" 2>/dev/null || echo 777)"
   if [[ "$installed_owner" != "0" ]] \
     || [[ ! "$installed_mode" =~ ^[0-7]{3,4}$ ]] \
     || (( ((8#$installed_mode) & 8#022) != 0 )); then
-    restore_core_update
-    hy2_die "安装后的 Hysteria 二进制所有权或权限不安全"
+    abort_core_update "安装后的 Hysteria 二进制所有权或权限不安全"
   fi
 
   # Supply-chain check on the actual core binary (not just the installer
@@ -2688,19 +2768,16 @@ install_hysteria() {
   expected_core_sha="${HYSTERIA_BINARY_SHA256:-}"
   remote_policy="${REMOTE_SCRIPT_POLICY:-warn}"
   if [[ -n "$expected_core_sha" && ! "$expected_core_sha" =~ ^[0-9A-Fa-f]{64}$ ]]; then
-    restore_core_update
-    hy2_die "HYSTERIA_BINARY_SHA256 必须是 64 位十六进制"
+    abort_core_update "HYSTERIA_BINARY_SHA256 必须是 64 位十六进制"
   fi
   core_sha="$(sha256sum "$installed_bin" | awk '{print $1}')"
   if [[ -n "$expected_core_sha" ]]; then
     if [[ "${core_sha,,}" != "${expected_core_sha,,}" ]]; then
-      restore_core_update
-      hy2_die "Hysteria 核心二进制 SHA-256 不匹配：期望 ${expected_core_sha}，实际 ${core_sha}"
+      abort_core_update "Hysteria 核心二进制 SHA-256 不匹配：期望 ${expected_core_sha}，实际 ${core_sha}"
     fi
     echo "✅ Hysteria 核心二进制 SHA-256 校验通过：${core_sha}"
   elif [[ "$remote_policy" == "require" ]]; then
-    restore_core_update
-    hy2_die "REMOTE_SCRIPT_POLICY=require，但未设置 HYSTERIA_BINARY_SHA256 以校验核心二进制"
+    abort_core_update "REMOTE_SCRIPT_POLICY=require，但未设置 HYSTERIA_BINARY_SHA256 以校验核心二进制"
   else
     echo "⚠️  未固定 HYSTERIA_BINARY_SHA256；本次核心二进制实际哈希：${core_sha}" >&2
   fi
@@ -2712,8 +2789,7 @@ install_hysteria() {
 
   for cfg in "${configs[@]}"; do
     if ! hy2_validate_config_with_binary "$installed_bin" "$cfg"; then
-      restore_core_update
-      hy2_die "新 Hysteria 与现有配置不兼容，已恢复旧核心"
+      abort_core_update "新 Hysteria 与现有配置不兼容"
     fi
   done
 
@@ -2721,8 +2797,7 @@ install_hysteria() {
   systemctl daemon-reload >/dev/null 2>&1 || true
   for unit in "${active_units[@]}"; do
     if ! hy2_restart_verify_managed_unit "$unit"; then
-      restore_core_update
-      hy2_die "升级后服务验证失败：${unit}；已恢复旧核心"
+      abort_core_update "升级后服务验证失败：${unit}"
     fi
   done
 
