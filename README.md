@@ -1,4 +1,4 @@
-# HY2 / WG-NAT / 端口限速
+# HY2 / WG-NAT / 端口限速 / 可选 SOCKS5 落地
 
 命令使用 **root + Bash**，示例端口换成实际端口。长命令和低频操作点击展开，所有内容都在本 README 内。
 
@@ -23,6 +23,8 @@
 | 今天 / 指定端口每日流量 | HY2 VPS | `hy2_traffic` / `hy2_traffic 40020`（[先安装](#daily-install)） |
 | 全部受管理暂停、IP/CIDR 黑名单 | HY2 VPS | `hy2-guard status` / `hy2-guard audit`（[先安装](#port-block)） |
 | 节点链接、自动重置日期、自动降速日志 | HY2 VPS | [查链接](#node-link) / [查重置日期](#quota-reset-time) / [查限速日志](#speed-logs) |
+| SOCKS5 账号、到期、剩余配额与 IP 占用 | 独立 SOCKS5 落地机 | `socks5 list`（[手动安装](#socks5)） |
+| SOCKS5 链接、每日用量与使用审计 | 独立 SOCKS5 落地机 | [查询说明](#socks5-query) |
 
 `hy2_audit.sh` 和 `pq_audit.sh` 对同一端口的配额使用同一底层计数快照，不是两套不同计费。`hy2_temp_sub.sh` 输出的订阅文件包含节点凭据。
 
@@ -218,6 +220,46 @@ hy2_temp_sub.sh
 
 </details>
 
+<a id="socks5-query"></a>
+
+<details>
+<summary>可选 SOCKS5 落地：账号、每日流量与访问审计</summary>
+
+以下仅在[独立安装 SOCKS5](#socks5)的落地机执行，与 HY2 的 UDP 配额、IP 槽位和每日统计分别管理：
+
+```bash
+socks5 list
+socks5 link 41004
+socks5 quota 41004
+socks5 ip-show 41004
+socks5 status
+socks5 audit 41004
+```
+
+`LIMIT / USED / LEFT` 为账号总配额、已用与剩余，`TTL` 为有效期，来源 IP 槽位不等于人数；未知或读取失败不能当成零。需要完整账号凭据时才运行 `socks5 show 41004 --credentials`，不要公开输出。
+
+每日流量需先按[6.5](#socks5)开启采集；约每分钟采样，按北京时间保留最近 30 天，不等于实时配额余额：
+
+```bash
+socks5-traffic
+socks5-traffic 41004
+socks5-traffic 41004 --json
+```
+
+访问审计按成功连接、原始主机名和各实例 journal 统计；日志通常在连接结束时写入，直接连接 IP 时不能推断域名，缺失或已清理的历史无法补查。天数范围 1～90：
+
+```bash
+socks5 access 41004 7
+socks5 access-domains 41004 7
+socks5 access-errors 41004 7
+socks5 access-errors 41004 7 --limit 200
+socks5 access-errors 41004 7 --all
+```
+
+`access` 提供概览，`access-domains` 列出全部成功连接的原始域名，`access-errors` 统计非零错误并列出明细；`--limit` 只改变明细条数。当前 TCP 连接与历史成功记录含义不同，不能把连接次数、来源 IP 或错误码直接当作人数、网页访问次数或恶意行为。
+
+</details>
+
 <a id="create"></a>
 
 ## 二、新建节点
@@ -335,9 +377,26 @@ WG-NAT 同样只需把 `IP_VERSION=4` 改成 `IP_VERSION=6`；客户端通过 IP
 <a id="socks5-create"></a>
 
 <details>
-<summary>其他协议：SOCKS5 不属于 HY2</summary>
+<summary>可选 SOCKS5：新建账号、固定端口与家宽公网映射</summary>
 
-本项目不包含 SOCKS5 账号管理，不提供 `socks5 add` 等命令。
+先在**独立落地机**按[6.5](#socks5)手动安装；HY2 安装器不自动安装此模块。以下分别创建 30 分钟、2 小时、7 天及固定本机端口的账号：
+
+```bash
+MINUTES=30; IP_LIMIT=1 IP_STICKY_SECONDS=60 PQ_GIB=1 D=$((MINUTES*60)) socks5 add
+HOURS=2; IP_LIMIT=2 IP_STICKY_SECONDS=300 PQ_GIB=5 D=$((HOURS*3600)) socks5 add
+DAYS=7; IP_LIMIT=3 IP_STICKY_SECONDS=600 PQ_GIB=50 D=$((DAYS*86400)) socks5 add
+HOURS=1; IP_LIMIT=1 IP_STICKY_SECONDS=60 PQ_GIB=1 PORT=41004 D=$((HOURS*3600)) socks5 add
+```
+
+`IP_LIMIT=0` 不限来源 IP 数；省略 `PQ_GIB` 不限总流量，省略 `PORT` 自动选空闲端口。持续活动刷新来源占位时间，超时释放槽位不等于强制断开已建立连接。
+
+家宽路由器需配置 **TCP** 公网端口映射；例如外部 `51004` 映射到本机 `41004`：
+
+```bash
+HOURS=1; IP_LIMIT=1 IP_STICKY_SECONDS=60 PORT=41004 D=$((HOURS*3600)) socks5 add --host proxy.example.com --public-port 51004
+```
+
+域名与外部端口换成真实值；后续管理及限速使用**本机监听端口 41004**。原样复用的版本仅支持 TCP CONNECT，不支持 UDP ASSOCIATE / BIND；没有新增 UDP 参数或转换 HY2 协议。
 
 </details>
 
@@ -534,6 +593,26 @@ portbw del 40001        # 仅取消端口限速，不删除 HY2 节点
 **HY2-NAT 真机测速（2026-11-04）：** `portbw set 40020 10 10`、`portbw report`、`portbw audit` 均正常，用户报告 v2rayN 测速通过，最后 `portbw del 40020` 正常取消。**这是旧主机对特定 HY2 链路的记录；通用自动触发与恢复复用同源码 `jieshu` 验收，不把旧主机当作当前 VPS。**
 
 **节点回收：** HY2 临时节点到期或删除时，会调用共享 `portbw del`，只删除该节点端口已保存的策略。发现对应记录但 CLI 缺失或删除失败时，保留节点元数据并报告失败，修复后重试；不清理其他端口、不卸载共享 portbw。WG-NAT 使用 HY2 VPS 上节点入口的端口策略，同数字端口的 TCP + UDP 共用额度；不要把 NAT 出口机的 WG `51820` 当作单个 HY2 节点限速端口。
+
+<details>
+<summary>可选 SOCKS5：配额、IP 槽位与主动恢复</summary>
+
+仅在独立 SOCKS5 落地机执行：
+
+```bash
+socks5 ip-show 41004
+socks5 ip-set 41004 2 60
+socks5 ip-del 41004
+socks5 pq-set 41004 5 --confirm-reset
+socks5 pq-del 41004
+socks5 watch
+```
+
+`pq-set` 将配额重设为 5 GiB、已用量清零并重设 30 天周期，需要显式 `--confirm-reset`；不是追加余额。`ip-set` 重置已有占位。`watch` 会修复规则或异常服务，不是只读查询。
+
+SOCKS5 使用同一独立 [portbw](#portbw)，在落地机安装后对**本机**端口设置。原样 SOCKS5 的账号创建、到期、删除不自动增删 portbw 策略；HY2 的节点清理集成不作用于 SOCKS5。路由器映射 `51004 → 41004` 时，限速设置在 `41004`。
+
+</details>
 
 <a id="troubleshooting"></a>
 ## 四、故障排查
@@ -742,6 +821,19 @@ hy2_clear_all.sh
 
 </details>
 
+<details>
+<summary>删除可选 SOCKS5 账号</summary>
+
+在独立落地机按本机监听端口删除；不会删除 HY2 节点。需要撤销该端口的独立限速时再手动删除对应 portbw 策略：
+
+```bash
+socks5 del 41004
+```
+
+HY2 的 `hy2_cleanup_one.sh`、`hy2_clear_all.sh` 及 `hy2-uninstall.sh` 不负责 SOCKS5 账号或模块；不要用 HY2 管理命令代替 SOCKS5 命令。
+
+</details>
+
 <a id="uninstall"></a>
 
 <details>
@@ -806,6 +898,7 @@ bash /root/hy2-uninstall.sh --yes --purge --remove-core
 | `traffic.py` | 新 HY2 VPS | 可选：UDP 每日流量统计 |
 | `portbw-install.sh`、`portbw.py` | 需要限速的 VPS | 可选：直接复用 jieshu 已验收的通用源码 |
 | `hy2-guard.py`、`hy2-abuse.py` | 新 HY2 VPS | 可选：防火墙管理、异常审计 |
+| `socks5-install.sh`、`socks5.py`、`socks5-traffic.py`、`socks5-audit.py` | 独立 SOCKS5 落地机 | 手动选择安装：账号、配额、流量及访问审计 |
 
 `tests/` 和 `.github/workflows/` 是项目的测试与 CI，不需要复制到业务服务器。
 
@@ -1173,9 +1266,59 @@ portbw audit
 
 <details>
 
-<summary>6.5 SOCKS5：独立协议，不属于 HY2 五文件版</summary>
+<summary>6.5 SOCKS5：独立可选落地、首次安装、更新与每日流量</summary>
 
-本项目不安装 SOCKS5 账号管理。
+四个模块原样复制自 `jieshu` 的 `89c5508`，仅作为**独立落地机上手动选择安装**的可选功能。`hy2.sh` / `nat.sh` / `vpswg.sh` / `natjichang.sh` 不自动安装 SOCKS5，也不让 HY2 流量自动经过 SOCKS5。SOCKS5 仅支持 TCP CONNECT，不支持 UDP ASSOCIATE。
+
+**验收复用：** 直接沿用 [jieshu README 的 SOCKS5 安装说明](https://github.com/liucong552-art/jieshu/blob/89c5508/README.md#socks5)及[历史审计验收记录](https://github.com/liucong552-art/jieshu/blob/89c5508/tests/SOCKS5_AUDIT_REAL_MACHINE_ACCEPTANCE.md)，不新增本轮 HY2 VPS 实测结论、不重复部署或功能测试。上游记有 Debian 12 真机及 Debian 13 暂存检查，也保留干净安装/升级等未覆盖边界；不能扩大为所有系统均通过。
+
+### 1. 四文件同目录下载
+
+以下在**独立 SOCKS5 落地机**以 root 执行；需要安装时才手动运行。先准备下载工具：
+
+```bash
+apt-get update && apt-get install -y curl ca-certificates
+```
+
+四个文件保持配套，下载失败不继续：
+
+```bash
+install -d -m 700 /root/socks5-release && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5-install.sh -o /root/socks5-release/socks5-install.sh && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5.py -o /root/socks5-release/socks5.py && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5-traffic.py -o /root/socks5-release/socks5-traffic.py && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5-audit.py -o /root/socks5-release/socks5-audit.py
+```
+
+### 2. 首次安装 / 已安装版本更新
+
+首次安装：
+
+```bash
+bash -n /root/socks5-release/socks5-install.sh && AUTO_DEPS=1 bash /root/socks5-release/socks5-install.sh install
+```
+
+原安装器优先读取自身目录的三个模块，并在安装前执行内置 SHA256 校验；必须看到 `[socks5] SHA256 校验通过`，不匹配就停止核对四文件，不能跳过校验。由于安装器也保持原样，若同目录文件不全，它的远程 fallback **仍指向 `jieshu/main`**（或原允许的审计分支），没有改成 HY2；上面的四文件流程使用本仓库配套本地模块。
+
+家宽路由器后的主机可在 `install` 后加 `--host proxy.example.com` 指定真实公网入口；必要时加 `--wan-if 实际网卡`。账号的公网/本机端口映射按[新建 SOCKS5 账号](#socks5-create)设置。
+
+已有账号的主机先保存可恢复快照，按上面下载流程更新四文件，再执行 `update`；不要对已有安装套用首次安装命令：
+
+```bash
+bash -n /root/socks5-release/socks5-install.sh && AUTO_DEPS=1 bash /root/socks5-release/socks5-install.sh update
+```
+
+更新不会主动清空账号，但迁移访问日志配置可能短暂重启实例；更新后核对账号、配额和实际连接。原安装器没有通用卸载/降级子命令，失败回退使用已验证的整机快照，不编造 `socks5 uninstall`。
+
+### 3. 每日流量与管理入口
+
+```bash
+socks5-traffic --install
+socks5 list
+socks5 status
+```
+
+每日统计独立开启；[账号/日志查询](#socks5-query)、[创建](#socks5-create)、配额和限速分别使用本 README 对应命令。运行数据位于 `/etc/socks5-manager/` 与 `/var/lib/socks5-manager/`，包含凭据，备份及审计原始日志不要公开。
 
 </details>
 
@@ -1324,7 +1467,7 @@ bash /root/portbw-install.sh rollback
 | 复用已有证据 | 源码一致、依赖与适用条件一致，并明确原证据来源；新 Peer 连通仍须单独检查 |
 | 仅自动化测试通过 | 单元测试、语法、生成脚本或模拟环境；不声称公网 UDP / TLS 已通过 |
 | 尚未验证 | 缺少环境、凭据或长期等待；保留具体边界及后续条件 |
-| 不适用 | VLESS Reality 密钥 / UUID、SOCKS5 账号等其他协议专属逻辑 |
+| 不适用 | VLESS Reality 密钥 / UUID 等其他协议专属逻辑；SOCKS5 作为独立可选模块提供 |
 
 下面是**旧测试机历史摘要**：
 
@@ -1346,7 +1489,8 @@ bash /root/portbw-install.sh rollback
 | 端口暂停、来源 IP/CIDR 黑名单 | **真机通过**：端口暂停/恢复、来源 IP `/32` 和 CIDR `/24` 封禁/解封；独立 nft 表正常重启持久化，HY2/WG 均正常 | 本轮真实90秒自然到期已清理端口guard/限速；异常断电仍未测 |
 | 访问目标、共享嫌疑、异常连接审计 | `hy2-abuse.py` 提供来源槽位、异常事件和可选当前 TCP 目标；本轮回环 Stats API 实际读取到在线实例、TCP 流及非空目标汇总 | 不把在线实例当人数，不宣称提供历史目标、UDP 目标或自动处罚结论 |
 | NAT 端 `probe-once` / `probe-enable` / `probe-disable` / `probe-status` | 既有 `jieshu` NAT 与 Peer 探测由操作者确认已真机验收；HY2 版本复制了相同机制但管理前缀不同 | **直接复用 `jieshu` NAT，不部署 HY2 NAT 管理器，不重复 Peer 验收**；NAT 实际冷重启属于单独破坏性测试 |
-| SOCKS5 账号、VLESS Reality 特定管理 | 不属于 HY2 五文件版 | 不应直接照搬 |
+| 独立 SOCKS5 账号 / 统计 / 审计 | 原样复用 jieshu 成熟模块，独立落地机手动安装，HY2 入口不自动安装 | 复用上游验收，本轮不重测；TCP CONNECT，不支持 UDP ASSOCIATE |
+| VLESS Reality 特定管理 | 非 HY2 协议能力 | 不复制 Reality 密钥、UUID 或 Xray 专属配置 |
 
 `vpswg.sh` 是对 `jieshu/vpswg.sh` 的 HY2 适配版：大部分代码相同，但临时节点目录、锁和旧标记切换时的 fail-closed 保护不能直接替换回 VLESS 版本。旧机已有 VPS 重启记录；本轮另行完成当前新 VPS 的真实 NAT 出口、测试 VPS WG 停止阻断与握手后恢复，不代表所有版本混用或生产 NAT 冷重启均已通过。
 
@@ -1380,4 +1524,4 @@ bash /root/portbw-install.sh rollback
 
 ---
 
-全部安装命令从 `liucong552-art/hy2jieshu` 下载。SOCKS5 账号与 VLESS Reality 密钥等协议专属功能不属于 HY2；共享的配额、统计和限速也须使用本仓库对应入口。
+本文直接下载入口指向 `liucong552-art/hy2jieshu`；原样 SOCKS5 安装器的远程 fallback 仍为 `jieshu`，按6.5下载四文件可使用配套本地模块。HY2 与独立 SOCKS5 各用自己的账号、配额和统计入口，共享 portbw 单独管理；VLESS Reality 密钥等协议专属配置不属于 HY2。

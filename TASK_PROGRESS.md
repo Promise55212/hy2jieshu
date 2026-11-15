@@ -42,3 +42,10 @@
 - 回滚最终修复：增加逐步诊断，定位Debian嵌套EXIT回滚中端口helper裸return输出443但返回1；改为显式成功，保留原部署失败状态。前两次失败记录保留，独立安全备份均恢复了服务。
 - 最终不同SHA候选真实到达拒绝门禁，部署exit1符合预期；官方核心SHA、配置/env/元数据/密码/链接文件全部不变，主节点自动active，fallback timer已停。Windows主节点curl0、出口正确，doctor0错误0警告，networking与管理timer active，失败unit0。测试VPS入口脚本已同步修复源码。
 - 新增8项真实生成函数隔离回归和7项发布检查在Linux通过；旧166项通过证据复用。对应最终提交的全量CI按Actions结果核对，不将本轮定向检查称为重复全量真机验收。
+
+## SOCKS5 独立可选组件原样复制
+- 用户明确要求复用成熟实现：从 jieshu `89c55085a57a57fadcf69e6c21a60b4cbf23d16c` Git 原始对象复制 core/installer/traffic/audit 和原审计测试；5文件SHA256及Git Blob一致，3个安装器内置SHA匹配。详见[静态复用记录](docs/SOCKS5_UPSTREAM_REUSE.md)。
+- README补齐独立落地机可选安装与管理；四文件同目录使用原安装器本地分支，原远程fallback仍为jieshu，未改实现/依赖/校验。HY2入口不自动安装，SOCKS5仅TCP CONNECT。
+- 本次不执行任何SOCKS5功能测试或服务器操作；按相同源码/依赖/条件复用上游已有真机证据，待验收清单不冒充通过。
+- 原测试文件保留不执行；CI在导入前排除该文件，仅静态校验SOCKS包，原HY2测试继续保留。后续AI不得通配发现并重跑SOCKS5功能测试。
+- 唯一修改仓库仍为hy2jieshu，jieshu全程只读，生产机未连接。

@@ -1,0 +1,35 @@
+{
+  "repository": "https://github.com/liucong552-art/jieshu",
+  "commit": "89c55085a57a57fadcf69e6c21a60b4cbf23d16c",
+  "files": [
+    {
+      "path": "socks5.py",
+      "sha256": "4c6d97e82749973d17274d96dc3f3cf828ca357638fcc6019c487ba3f49a3dcf",
+      "git_blob": "1e9913c8ce9f9c92734a174e643d6873eb4e38c8"
+    },
+    {
+      "path": "socks5-install.sh",
+      "sha256": "b335592be4ead45d10fffd2a5dc4a6ffeef9a5f50313cab40f55a651b855bf90",
+      "git_blob": "f3863a4d2c493a106a075621e18bc304b5311e2f"
+    },
+    {
+      "path": "socks5-traffic.py",
+      "sha256": "134bcd2a2ee8947bcad3bad09c6f0d50ea5474249701758c514a2294274deb23",
+      "git_blob": "41756a234a5074a1daea81291a791147dfa20264"
+    },
+    {
+      "path": "socks5-audit.py",
+      "sha256": "3c6e1bb357959e12d04c9adf2ba0a99f51ca349c4b812f8b6981259843acf7c8",
+      "git_blob": "79f819aca868dc5a57c8691dd1e4e173565f16bc"
+    },
+    {
+      "path": "tests/test_socks5_access_audit.py",
+      "sha256": "bb6f6d331c2770aaeaa30ecb2f5d8778cb29da37d2c90196bb4d76cfa1f5b980",
+      "git_blob": "22a489c5983b7bb69935dd003116c4f34044e401"
+    }
+  ],
+  "functional_tests_not_run": [
+    "tests/test_socks5_access_audit.py"
+  ],
+  "acceptance": "User confirms mature jieshu real-machine acceptance; reused only for identical source, dependencies and conditions. No host connections or SOCKS5 functional tests in this copy task."
+}
