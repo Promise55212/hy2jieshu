@@ -1,5 +1,9 @@
 # HY2 / WG-NAT / 端口限速 / 可选 SOCKS5 落地
 
+<!-- HY2-README-FULL-PARITY-2026-11-16: local docs only -->
+
+<!-- HY2-README-FULL-PARITY-2026-11-16: local docs only -->
+
 命令使用 **root + Bash**，示例端口换成实际端口。长命令和低频操作点击展开，所有内容都在本 README 内。
 
 [查询](#queries) · [新建节点](#create) · [修改与重置](#modify) · [排查](#trouble-guide) · [封禁与删除](#remove) · [安装与更新](#install) · [卸载](#uninstall) · [验收](#acceptance)
@@ -27,6 +31,16 @@
 | SOCKS5 链接、每日用量与使用审计 | 独立 SOCKS5 落地机 | [查询说明](#socks5-query) |
 
 `hy2_audit.sh` 和 `pq_audit.sh` 对同一端口的配额使用同一底层计数快照，不是两套不同计费。`hy2_temp_sub.sh` 输出的订阅文件包含节点凭据。
+
+**阅读与使用方式：** 先使用本章总览取得节点/配额/状态，再选择对应折叠章节；不可把 `pq_audit.sh` 的配额余额当成当日统计，也不可把 `portbw report` 的 Mbps 当成总流量。端口是管理入口，节点凭据、Peer 私钥及原始日志不应外传。下方命令中 `40020`、`41004` 等数字均为示例，执行修改类命令前先查真实端口与归属。
+
+| 需求 | 首选入口 | 补充入口 | 注意事项 |
+|---|---|---|---|
+| HY2 主/临时节点、有效期、配额/IP 槽位 | `hy2_audit.sh` | `pq_audit.sh`、`hy2-guard status` | `IP_LIMIT=0` 不建立占位记录，不能据此断言无人访问 |
+| HY2 错误日志与当前 TCP 目的地 | `hy2-abuse 40020 --days 7` | 开启回环 Stats API 后带 `--stats-url` | 不是完整历史域名审计，也不包含 UDP 历史目标 |
+| SOCKS5 账号、到期与访问历史 | **落地机** `socks5 list` | `socks5 access 41004 7` | 与 HY2 完全独立、仅 TCP CONNECT |
+| WG-NAT Peer 与出口 | **NAT 机** `bash /root/nat.sh list` | HY2 VPS `wg show wg-nat` | 只读状态不等于外部真实出口测试 |
+| 带宽限制与保护 | `portbw report` | `portbw auto status 40020` | TCP/UDP 共用端口限额，升级和恢复另有独立流程 |
 
 <details><summary>展开：已有的审计、主节点和临时节点订阅命令</summary>
 
@@ -205,6 +219,22 @@ hy2-abuse 40020 --days 7 --json
 - **实时访问目标**：如果手动配置了 Hysteria 2 **Traffic Stats API** 且仅绑定回环地址，可额外查询**当前 TCP 流**的目标地址、当前在线实例数（见安装说明）。**UDP 目标和历史目标列表不由该 API 提供**，不能虚构。
 - **只读**：不触发自动封禁，也不更改配额、WG、nft 规则。IP 槽位/在线实例数不等于真实人数，出现异常事件也不等于已经确定滥用。
 
+#### HY2 异常排查：按端口、日志类别与证据边界
+
+审计工具只读已存在的日志与运行态，不安装持续记录历史域名的代理，也**不会自动识别滥用者**。与 `jieshu` 的审计入口保持相同的“先查询、后判断”体验；采集机制仍遵循 Hysteria2 实际能力。
+
+| 想知道什么 | HY2 VPS 的查询方式 | 能得出的结论 |
+|---|---|---|
+| 某端口最近 7 天是否有认证/握手错误 | `hy2-abuse 40020 --days 7` | 在仍保留的 journald 样本中按类别统计错误/警告，不是全部连接记录 |
+| 是否有特定来源 IP 正占用槽位 | `hy2-abuse 40020 --days 7 --json` | 只有启用 IP 槽位限制且对应集合存在，才有当前占位信息 |
+| 主节点本身的服务日志 | `journalctl -u hy2.service --since '24 hours ago' --no-pager` | 可能含有敏感字段；**不应公开原始日志** |
+| 当前 TCP 流量访问目标 | 先自行按 [Stats API 说明](#abuse-install)启用回环 API，再用 `--stats-url` | 当前 TCP 流，不能推导完整历史、UDP 目标或真实人数 |
+| 是否另有整端口暂停/来源封禁 | `hy2-guard status` / `hy2-guard audit` | 手工防护规则，与访问日志不是同一个数据源 |
+
+`--days 7` 的时间范围只约束 journal 查询；最多读取该服务最近 3000 条日志。超过范围、被 logrotate 清理或从未被记录的历史信息，不能通过修改天数追回。`auth`、`handshake`、`quic`、`timeout` 等类别代表事件类型，不代表某来源一定恶意；统计结果不能替代手工证据分析。
+
+需要按端口识别具体临时服务时，先使用 `hy2_audit.sh` 获取完整 TAG，再查询相应 `hy2-temp-...service` 的 journal。不要用 `ss -ltn` 的 TCP 监听结论判定 HY2 UDP/443 是否在线，也不要把 NAT 出口目标地址误当作用户来源。
+
 <a id="subscription"></a>
 
 <details>
@@ -238,6 +268,10 @@ socks5 audit 41004
 
 `LIMIT / USED / LEFT` 为账号总配额、已用与剩余，`TTL` 为有效期，来源 IP 槽位不等于人数；未知或读取失败不能当成零。需要完整账号凭据时才运行 `socks5 show 41004 --credentials`，不要公开输出。
 
+<a id="socks5-daily"></a>
+
+#### SOCKS5 每日流量：今天与最近 30 天
+
 每日流量需先按[6.5](#socks5)开启采集；约每分钟采样，按北京时间保留最近 30 天，不等于实时配额余额：
 
 ```bash
@@ -245,6 +279,10 @@ socks5-traffic
 socks5-traffic 41004
 socks5-traffic 41004 --json
 ```
+
+<a id="socks5-access"></a>
+
+#### SOCKS5 使用审计、共享和异常连接
 
 访问审计按成功连接、原始主机名和各实例 journal 统计；日志通常在连接结束时写入，直接连接 IP 时不能推断域名，缺失或已清理的历史无法补查。天数范围 1～90：
 
@@ -257,6 +295,21 @@ socks5 access-errors 41004 7 --all
 ```
 
 `access` 提供概览，`access-domains` 列出全部成功连接的原始域名，`access-errors` 统计非零错误并列出明细；`--limit` 只改变明细条数。当前 TCP 连接与历史成功记录含义不同，不能把连接次数、来源 IP 或错误码直接当作人数、网页访问次数或恶意行为。
+
+**SOCKS5 查询字段速查（所有命令仅在独立落地机执行）：**
+
+| 需求 | 命令 | 特别注意 |
+|---|---|---|
+| 按端口看链接 | `socks5 link 41004` | 可能包含凭据，不能转发公开群组 |
+| 查询余额和到期 | `socks5 list` | `LIMIT / USED / LEFT` 是合计流量，不是单向限额 |
+| 当前源 IP 占位 | `socks5 ip-show 41004` | IP 不是实际用户数；槽位超时释放不强制断开已有 TCP |
+| 查看某端口精确配额 | `socks5 quota 41004` | 不要误认为是每日统计 |
+| 当前服务和规则自检 | `socks5 status` / `socks5 audit 41004` | 不是访问域名历史查询 |
+| 过去 7 天访问域名和异常连接 | `socks5 access 41004 7` | 来自已有代理日志；原始日志若缺失无法补查 |
+| 列出全部已记录的成功访问域名 | `socks5 access-domains 41004 7` | 直接按 IP 连接时不能推导一个域名 |
+| 查询错误码明细 | `socks5 access-errors 41004 7 --all` | 错误不等同于已经证实滥用 |
+
+日志与凭据属于敏感信息，应留在落地机的 root 私有环境。业务运行期间不要为了补齐历史日志而重装、重启现有 SOCKS5 服务。
 
 </details>
 
@@ -354,6 +407,16 @@ WG-NAT 同样只需把 `IP_VERSION=4` 改成 `IP_VERSION=6`；客户端通过 IP
 
 创建成功后会直接输出端口、到期时间和节点链接。
 
+**创建后如何验收、如何选择类型：** 先用 `hy2_audit.sh` 查到新 TAG、真实端口、剩余 TTL 与配额/IP 限制，再从自己的兼容客户端连接；仅 `systemctl active`、UDP 监听或脚本输出链接并不能证明公网客户端可用。普通节点从 VPS 公网出站；NAT 节点必须先核实自己的 WireGuard Peer、握手、mark 路由与出口防泄漏，不能将其失败时自动改走 VPS 出口。
+
+| 创建意图 | 使用命令 | 对创建结果的关键检查 |
+|---|---|---|
+| 普通 UDP/QUIC 临时节点 | `hy2_mktemp.sh` | 对外 UDP 端口、SNI/证书、密码、配额与 IP 槽位 |
+| WG-NAT 临时节点 | `hy2_mktemp_nat.sh` | 以上条件，加上专属 Peer、WG 路由和真实 NAT 出口 |
+| IPv6 入站 | 增加 `IP_VERSION=6` | VPS 有全局 IPv6、AAAA/SNI/防火墙与客户端 IPv6 均正确 |
+
+禁止在已有真实业务端口上运行固定端口创建示例；`PORT_START=PORT_END` 只是指定端口，不是绕过端口冲突检测的办法。TTL 和 30 天配额周期是两个时间维度，修改配置不会自动延长节点到期时间。
+
 </details>
 
 <details>
@@ -379,16 +442,55 @@ WG-NAT 同样只需把 `IP_VERSION=4` 改成 `IP_VERSION=6`；客户端通过 IP
 <details>
 <summary>可选 SOCKS5：新建账号、固定端口与家宽公网映射</summary>
 
-先在**独立落地机**按[6.5](#socks5)手动安装；HY2 安装器不自动安装此模块。以下分别创建 30 分钟、2 小时、7 天及固定本机端口的账号：
+先在**独立落地机**按[6.5](#socks5)手动安装；HY2 安装器不自动安装此模块。以下按分钟、小时、天及指定端口分别给出可复制示例。示例只在**新建或明确选定的独立 SOCKS5 落地机**执行，不在 HY2 入口机执行。
+
+#### 创建 30 分钟账号
+
+来源 IP 上限 1、闲置占位 60 秒、双向合计 1 GiB 配额：
 
 ```bash
 MINUTES=30; IP_LIMIT=1 IP_STICKY_SECONDS=60 PQ_GIB=1 D=$((MINUTES*60)) socks5 add
+```
+
+#### 创建 2 小时账号
+
+来源 IP 上限 2、闲置占位 300 秒、合计 5 GiB 配额：
+
+```bash
 HOURS=2; IP_LIMIT=2 IP_STICKY_SECONDS=300 PQ_GIB=5 D=$((HOURS*3600)) socks5 add
+```
+
+#### 创建 7 天账号
+
+来源 IP 上限 3、闲置占位 600 秒、合计 50 GiB 配额：
+
+```bash
 DAYS=7; IP_LIMIT=3 IP_STICKY_SECONDS=600 PQ_GIB=50 D=$((DAYS*86400)) socks5 add
+```
+
+#### 固定本机监听端口
+
+创建监听 `41004` 的 1 小时账号；省略 `PORT` 则由安装器选择本机空闲端口：
+
+```bash
 HOURS=1; IP_LIMIT=1 IP_STICKY_SECONDS=60 PQ_GIB=1 PORT=41004 D=$((HOURS*3600)) socks5 add
 ```
 
+
 `IP_LIMIT=0` 不限来源 IP 数；省略 `PQ_GIB` 不限总流量，省略 `PORT` 自动选空闲端口。持续活动刷新来源占位时间，超时释放槽位不等于强制断开已建立连接。
+
+**参数详细说明：**
+
+| 参数 | 含义 | 适用说明 |
+|---|---|---|
+| `D` | 账号有效期，单位秒 | 可以由 `MINUTES`、`HOURS`、`DAYS` 变量计算；变量本身不是安装器子命令 |
+| `IP_LIMIT` | 同时占用的来源 IP 槽位上限 | `0` 表示不限；不等于 TCP 会话数量 |
+| `IP_STICKY_SECONDS` | 某来源 IP 闲置后释放名额的时间 | 活跃来源会刷新占位，不能据此保证强制踢出连接 |
+| `PQ_GIB` | 合计上传+下载流量额度，GiB | 不设表示无总配额；配额在账号级累计 |
+| `PORT` | 本机监听 TCP 端口 | 管理、配额、独立限速均按本机端口操作 |
+| `--host` / `--public-port` | 客户端使用的公网域名和映射端口 | 不会替你创建路由器端口映射，需自行配置 TCP 映射 |
+
+创建前先核对本机端口未被现有账号或其他服务占用；删除账号前核对 `socks5 list`，避免误删真实用户。原版 SOCKS5 不支持 UDP ASSOCIATE；即使与 HY2 同一仓库，也不代表它自动具备 UDP 代理能力。
 
 家宽路由器需配置 **TCP** 公网端口映射；例如外部 `51004` 映射到本机 `41004`：
 
@@ -516,6 +618,8 @@ fi
 
 `pq-reset.timer` 开机约 15 分钟后首次检查，以后通常每小时检查一次。
 
+**自动重置与手动修改的区别：** 对有效期严格超过 30 天且创建时有配额的临时节点，周期重置使用节点自己的锚点，通常每 30×24 小时计算一次，并不会在北京时间每月 1 日统一重置。重设额度可能导致 `pq_add.sh` 清除原周期，需按具体业务需求选择 `pq_keepcycle.sh`。此处的查询命令是只读的，`pq-save.timer` 保存累计用量，与自动重置定时器职责不同。
+
 ```bash
 systemctl list-timers --all pq-reset.timer
 journalctl -u pq-reset.service -n 50 --no-pager
@@ -523,6 +627,36 @@ journalctl -u pq-reset.service -n 50 --no-pager
 ```
 
 </details>
+
+<a id="quota-set-current-remaining"></a>
+
+### 临时修改本期剩余流量（下周期恢复原配额）
+
+与 `jieshu` 的[本期剩余额度一行调整](https://github.com/liucong552-art/jieshu/blob/f21b70d0f52f8f9cd6cbcc0a1fe4a8fd11b221fe/README.md#quota-set-current-remaining)对应，HY2 可以**直接复用已安装的 `/usr/local/lib/hy2/common.sh` 与 `quota-lib.sh`** 完成相同用途。不需要下载安装新脚本或重装 HY2；**此命令是 README 中的临时 Bash 操作，不代表仓库已有 `pq_set_remaining.sh` 可执行程序**。
+
+适用范围：**已有有效 30 天自动重置周期、尚未到期、原始配额正常的 HY2 受管临时节点**。例如原始总额度 200 GiB，本期希望**从此刻起还可使用 85 GiB**，只修改最前面的 `PORT=40020` 与 `LEFT_GIB=85` 两个值，其他内容完整复制到该 HY2 VPS 的 **root Bash 终端**。如果是短期节点、没有周期的节点、已到下次重置时间附近（60 秒内）或配额状态异常，命令会拒绝修改。**务必先确认真实端口和账号归属。**
+
+<details>
+<summary>展开：一行直接设置本期剩余流量（只改 PORT 和 LEFT_GIB）</summary>
+
+```bash
+PORT=40020 LEFT_GIB=85 bash -c 'set -Eeuo pipefail; umask 077; [[ "$(id -u)" == "0" ]] || { echo "请以root运行" >&2; exit 1; }; [[ "${PORT:-}" =~ ^[0-9]{1,5}$ ]] && (( 10#$PORT >= 1 && 10#$PORT <= 65535 )) || { echo "端口无效" >&2; exit 1; }; [[ -n "${LEFT_GIB:-}" ]] || { echo "请填写LEFT_GIB" >&2; exit 1; }; source /usr/local/lib/hy2/common.sh; source /usr/local/lib/hy2/quota-lib.sh; WANT="$(hy2_parse_gib_to_bytes "$LEFT_GIB")" || hy2_die "剩余额度无效"; [[ "$WANT" =~ ^[0-9]+$ ]] && (( WANT > 0 )) || hy2_die "剩余额度必须大于0"; hy2_ensure_runtime_dirs; hy2_acquire_lock_fd 7 "${HY2_LOCK_DIR}/temp.lock" 120 "节点锁繁忙"; export HY2_TEMP_LOCK_HELD=1; hy2_pq_lock; T="$(hy2_temp_meta_by_port "$PORT")"; [[ -n "$T" && -f "$T" ]] || hy2_die "不是受管HY2临时节点"; TAG="$(hy2_meta_get "$T" TAG)"; Q="$(hy2_quota_meta_file "$PORT")"; [[ -f "$Q" ]] || hy2_die "没有配额元数据"; [[ "$(hy2_meta_get "$Q" PORT)" == "$PORT" && "$(hy2_meta_get "$Q" OWNER_KIND)" == "temp" && "$(hy2_meta_get "$Q" OWNER_TAG)" == "$TAG" ]] || hy2_die "配额归属不匹配"; ORIG="$(hy2_meta_get "$Q" ORIGINAL_LIMIT_BYTES)"; EXPECTED="$(hy2_meta_get "$T" PQ_LIMIT_BYTES)"; PENDING="$(hy2_meta_get "$Q" REBUILD_PENDING)"; [[ "$ORIG" =~ ^[0-9]+$ && "$ORIG" == "$EXPECTED" && "$PENDING" == "0" ]] || hy2_die "配额结构异常或待恢复"; (( WANT <= ORIG )) || hy2_die "剩余不能超过原始周期配额"; NEXT="$(hy2_meta_get "$Q" NEXT_RESET_EPOCH)"; INTERVAL="$(hy2_meta_get "$Q" RESET_INTERVAL_SECONDS)"; EXPIRE="$(hy2_meta_get "$Q" EXPIRE_EPOCH)"; DURATION="$(hy2_meta_get "$Q" DURATION_SECONDS)"; CREATED="$(hy2_meta_get "$Q" CREATED_EPOCH)"; LAST="$(hy2_meta_get "$Q" LAST_RESET_EPOCH)"; START="$(hy2_meta_get "$T" CREATE_EPOCH)"; for V in "$NEXT" "$INTERVAL" "$EXPIRE" "$DURATION" "$CREATED" "$LAST" "$START"; do [[ "$V" =~ ^[0-9]+$ ]] || hy2_die "周期元数据无效"; done; NOW="$(date +%s)"; (( INTERVAL == 2592000 && DURATION > INTERVAL && NEXT > NOW + 60 && EXPIRE > NOW && START > 0 && START <= NOW && EXPIRE == START + DURATION )) || hy2_die "没有有效的未来30天周期或节点已到期"; [[ "$(hy2_meta_get "$T" DURATION_SECONDS)" == "$DURATION" && "$(hy2_meta_get "$T" EXPIRE_EPOCH)" == "$EXPIRE" ]] || hy2_die "节点生命周期元数据不匹配"; IFS="|" read -r STATE TOTAL USED LEFT <<< "$(hy2_pq_snapshot_unlocked "$PORT")"; [[ "$STATE" == active || "$STATE" == exhausted ]] && [[ "$TOTAL" == "$ORIG" && "$USED" =~ ^[0-9]+$ && "$LEFT" =~ ^[0-9]+$ ]] || hy2_die "实时nft配额不健康"; BACKUP="$(mktemp -d "/root/hy2-set-left-${PORT}-XXXXXXXX")"; chmod 700 "$BACKUP"; cp -p -- "$Q" "$BACKUP/quota.env"; cp -p -- "$T" "$BACKUP/node.env"; echo "原状态备份: $BACKUP"; NEW_USED=$((ORIG-WANT)); if ! hy2_pq_write_meta "$PORT" "$ORIG" "$NEW_USED" "$WANT" temp "$TAG" "$DURATION" "$EXPIRE" "$NEXT" "$INTERVAL" "$CREATED" "$LAST" "$NOW" 1; then hy2_die "写入失败；保留私有备份，请检查状态"; fi; if ! hy2_pq_rebuild_port "$PORT" "$WANT"; then hy2_die "nft规则重建失败；保留备份和待恢复标志，请先排查，不要盲目重试"; fi; if ! hy2_meta_upsert "$Q" REBUILD_PENDING 0; then hy2_die "恢复标志清理失败；保留备份，请先排查"; fi; echo "已设置端口 $PORT 当前剩余 $LEFT_GIB GiB；原周期总额与下次重置时间不变"; TZ=Asia/Shanghai date -d "@$NEXT" "+下次重置（北京时间）：%F %T"; echo "请执行 pq_audit.sh $PORT 核对；此处已用量是计费值，可能包含人为虚拟用量"'
+```
+
+</details>
+
+**执行结果**：原始周期总额仍为 200 GiB，本期计费已用调整为 `200 − 85 = 115 GiB`、本期剩余变为 85 GiB；**下一个正常自动重置周期仍恢复 200 GiB**，下次重置日期、节点过期时间、端口、密码、订阅链接均不修改。期间的新流量继续消耗这 85 GiB。流量统计里的计费 `USED` 可能包含人为设置的虚拟用量，**不等于真实消耗**，真实日流量历史应另外查询 `hy2_traffic`。
+
+**处理步骤与失败边界：** 此命令先获取临时节点锁和配额锁，核验配额与节点归属，检查有效 30 天周期和 nft 实时状态，然后在 `/root/hy2-set-left-端口-随机字符/` 备份原配额及节点元数据（root 私有），更新原计费已用量并重建本端口的 UDP 配额规则。它不会修改其他端口、WG、NAT、SOCKS5 或 portbw，不安装服务。**但是它会真实修改指定用户的计费配额与 nft 规则，可能影响正在传输的数据**；同一周期重复执行会重新赋予指定剩余额度。
+
+若配额元数据写入后 nft 重建失败，脚本会非零退出、保留私有备份和 `REBUILD_PENDING` 标志；现有重建函数尝试将该端口 fail-closed。**此时不能盲目重试，也不能擅自清除待恢复标志**，应先检查 `pq_audit.sh`、`hy2_doctor.sh --strict` 与对应规则，由有经验的操作者定位并恢复。终端显示成功后也要核对：
+
+```bash
+pq_audit.sh 40020
+hy2_audit.sh
+```
+
+**验证状态：** 此一行操作已依据当前 `hy2.sh` 的配额元数据/锁/重建函数进行代码核查，并用隔离模拟数据完成正常调整、耗尽后恢复、超额/无效周期/异常状态拒绝、重建失败保留待恢复标志等检查；**没有在真实 Debian VPS 或真实客户节点上执行，因此尚不能称为真机验收通过。** 建议首次使用前在专用测试节点验证当前余额、随后使用、重启持久化以及下一周期恢复，生产节点应先有可恢复快照。
 
 <a id="portbw"></a>
 
@@ -546,6 +680,10 @@ portbw auto set 40000 --up 40 --down 40 --trigger 100 --after 45s --auto-up 18 -
 自动模式只有 `--cooldown` 可省略，默认 `60s`；零冷却必须明确填 `--cooldown 0s`，其他自动参数均必填。两方向均须满足 `0 < 降速值 < 基础速度`；`--trigger` 的单位为百分比，不是 Mbps。
 
 设置后用 `portbw report` 核对；需要采样进度或内核故障检查时，见[补充查询](#advanced-queries)。
+
+**自动降速完整核对顺序：** 设置前用 `portbw report` 保存原状态，设置后分别用 `portbw report`、`portbw auto status 40000` 和 `portbw audit` 查看端口基础限速、采样进度、异常状态。`portbw auto off 40000` 只取消自动策略、恢复该端口的基础上下行限制；`portbw del 40000` 则删除此端口整份 portbw 策略。两个动作不同，不应混用。端口上 TCP 与 UDP 上行共用一份聚合上限、下行另共用一份，**不是协议之间各分独立带宽**。
+
+若服务日志发生轮转，`journalctl -u portbw-watch.service` 查询不到旧降速事件不等于此前从未发生过；也不能以单次吞吐低于设定 Mbps 断言守护进程故障。SOCKS5 的端口限速另在独立落地机操作其**本机 TCP 端口**，不在 HY2 VPS 替它设置。
 
 ```bash
 portbw auto off 40000  # 关闭自动模式，恢复本端口的基础上传 / 下载限速
@@ -609,6 +747,17 @@ socks5 watch
 ```
 
 `pq-set` 将配额重设为 5 GiB、已用量清零并重设 30 天周期，需要显式 `--confirm-reset`；不是追加余额。`ip-set` 重置已有占位。`watch` 会修复规则或异常服务，不是只读查询。
+
+| 管理动作 | 命令 | 影响范围 |
+|---|---|---|
+| 查看 IP 占位 | `socks5 ip-show 41004` | 查询，不修改占位 |
+| 重设来源上限与占位 | `socks5 ip-set 41004 2 60` | 重置本账号的来源占位，可能影响正在使用的来源 |
+| 取消来源上限 | `socks5 ip-del 41004` | 不删除账号 |
+| 重设总配额为 5 GiB | `socks5 pq-set 41004 5 --confirm-reset` | **清空已有用量**；不是购买额外 5 GiB |
+| 取消总配额 | `socks5 pq-del 41004` | 取消限制，风险应由操作者评估 |
+| 主动修复防护/服务 | `socks5 watch` | **可能修改规则或服务状态**，不建议随意在生产落地机运行 |
+
+涉及真实用户账号时，先记录原配额、到期时间、IP 占位和快照；不要把只读查询与会重置用量的命令混在一次批处理里。
 
 SOCKS5 使用同一独立 [portbw](#portbw)，在落地机安装后对**本机**端口设置。原样 SOCKS5 的账号创建、到期、删除不自动增删 portbw 策略；HY2 的节点清理集成不作用于 SOCKS5。路由器映射 `51004 → 41004` 时，限速设置在 `41004`。
 
@@ -675,6 +824,19 @@ systemctl start hy2-managed-watchdog.service
 ```
 
 仅因手工 guard 故障被安全停止的主节点需要上述显式启动；不要在防护未恢复时直接绕过检查启动服务。
+
+### 按症状顺序排查：从只读到必要修复
+
+| 故障现象 | 第一步（只读） | 第二步（确认后） | 不应做的事 |
+|---|---|---|---|
+| 主节点无法连接 | `hy2_doctor.sh --strict`、`journalctl -u hy2.service -n 50 --no-pager` | 检查域名 A、TLS/SNI、UDP/443 与云防火墙 | 把 `ss -ltn` 的 TCP/443 状态当作 HY2 结论 |
+| 某个临时节点拒绝新来源 | `hy2_audit.sh`、`pq_audit.sh`、`hy2-guard status` | 分别判断到期、配额、IP 槽位或手工封禁 | 在原因未明时直接清零配额或取消所有黑名单 |
+| 自动降速不恢复 | `portbw report`、`portbw audit`、`portbw auto status 40020` | 核对采样窗口、触发及恢复规则 | 清空全局 nft/tc，影响其他业务 |
+| NAT 出口不可用 | `wg show wg-nat`、只读预检及错误日志 | 核对握手、Peer、mark 路由与 fail-closed 状态 | 把 NAT 故障节点直接改成 VPS 出口而泄漏 |
+| 手工暂停仍生效 | `hy2-guard status`、`hy2-guard audit` | 若已获授权，按[暂停与黑名单章节](#pause-port)处理对应端口 | 直接删除整个 `nftables` ruleset |
+| SOCKS5 账号连接异常 | **在落地机**查 `socks5 list`、`socks5 status` | 再按现有账号与访问审计记录定位 | 在 HY2 入口机运行 SOCKS5 管理/重装命令 |
+
+只读检查完成后，才考虑确有必要的服务恢复。服务器有真实用户时，不应把“功能已在 CI 通过”当作允许立即重启或重装的理由。恢复后需核查实际客户端连接，不以 `systemctl active` 单独认定公网业务正常。
 
 <a id="service-management"></a>
 
@@ -775,6 +937,27 @@ hy2-guard clear 40020
 ```
 
 **区别**：`IP_LIMIT=1` 是最多同时允许一个活跃来源 IP；`hy2-guard ban` 则直接封禁具体来源地址或网段，它们各自独立，互不替代。手工黑名单支持持久化，暂停与封禁均覆盖同数字端口的 TCP + UDP。新版节点清理会调用 `hy2-guard forget` 删除该端口的暂停与黑名单，避免端口复用继承旧规则。
+
+#### 多个来源 IP：逐条执行与逐条撤销
+
+先确认端口属于目标 HY2 节点，且**不是 SSH 或其他管理服务使用的端口**。以下仅为示例测试地址，须替换为你明确要处理的来源 IP：
+
+```bash
+# 对端口 40020 按来源逐条封禁；某条失败立即停止
+for ip in 198.51.100.8 198.51.100.9; do
+  hy2-guard ban 40020 "$ip" || break
+done
+hy2-guard status
+hy2-guard audit
+
+# 只解除指定两条记录；不清除其他来源封禁
+for ip in 198.51.100.8 198.51.100.9; do
+  hy2-guard unban 40020 "$ip" || break
+done
+hy2-guard audit
+```
+
+`clear 40020` 会清除该端口全部来源黑名单，而 `resume 40020` 只撤销端口暂停；两者不是同一个动作。规则同时覆盖**该数字端口的 TCP 与 UDP**，不会因为 HY2 的业务承载协议为 UDP 就自动放过 TCP。
 
 <a id="blacklist-report"></a>
 
@@ -901,6 +1084,16 @@ bash /root/hy2-uninstall.sh --yes --purge --remove-core
 | `socks5-install.sh`、`socks5.py`、`socks5-traffic.py`、`socks5-audit.py` | 独立 SOCKS5 落地机 | 手动选择安装：账号、配额、流量及访问审计 |
 
 `tests/` 和 `.github/workflows/` 是项目的测试与 CI，不需要复制到业务服务器。
+
+**三台机器的职责，不要混淆：**
+
+| 部署角色 | 实际安装的协议或工具 | 不应在这台机盲目执行 |
+|---|---|---|
+| HY2 入口 VPS | Hysteria2、HY2 节点/配额/IP 管理、可选 guard/abuse/portbw、必要时 VPS 端 WG | 不自动安装独立 SOCKS5、不初始化生产 NAT 出口 |
+| WG/NAT 出口机 | 原有 `jieshu/nat.sh` 和 WireGuard Peer | 不覆盖已经验收的生产版 NAT 管理器；不为更新 HY2 重启共享 WG |
+| SOCKS5 独立落地机 | 原样复用的 SOCKS5 安装器、账号、流量、访问审计；限速另行自选 portbw | 不运行 HY2 主安装器，SOCKS5 也不意味着 HY2 自动经 SOCKS5 转发 |
+
+> README 中的安装、重装、删除、`watch`、`restore`、`probe-*`、`systemctl restart` 等命令均为**操作示例**，不是文档校验过程中应自动执行的步骤。共享生产系统先做快照并安排维护窗口。
 
 需要单独查看系统准备和新 Peer 接入细节时，可参考[全新 VPS 部署手册](docs/FRESH_VPS_DEPLOY.md)；**下面 6.1、6.2 已经包含可直接执行的完整命令，不必跳转后才能安装。**
 
@@ -1140,6 +1333,17 @@ bash /root/nat.sh probe-status hy2
 
 确实需要控制已有 Peer 的定时器时，再使用 `probe-enable` / `probe-disable`；**不要为了 HY2 验收去启停已经工作的探测定时器**。`WG_PROBE_SENT` 仅表示探测包已尝试发送，不是远端已成功重新握手的证明。
 
+**可选探测的操作边界（仅供确认需要时使用）：**
+
+| 命令 | 作用 | 生产共享 NAT 注意事项 |
+|---|---|---|
+| `bash /root/nat.sh probe-status hy2` | 查询指定 Peer 探测状态 | 优先使用，避免改变已有 timer |
+| `bash /root/nat.sh probe-once hy2` | 主动尝试发送一次探测 | 不是只读；是否成功应再看握手和真实出口 |
+| `bash /root/nat.sh probe-enable hy2` | 为指定 Peer 启用探测 | 可能更改定时器；仅在明确授权和维护窗口执行 |
+| `bash /root/nat.sh probe-disable hy2` | 为指定 Peer 禁用探测 | 会改变已有监控行为；不为了 HY2 对标随意执行 |
+
+运行 `list` / `status` 前先确认登录的是**落地 NAT 出口机**，不是新 HY2 VPS。共享出口机已有真实用户时，不执行 `init`、无目的的 `add` / `del`、WG 重启或“为了演示命令”的探测操作；新 VPS 的独立 Peer 已存在就直接复用。
+
 </details>
 
 <a id="daily-install"></a>
@@ -1310,6 +1514,10 @@ bash -n /root/socks5-release/socks5-install.sh && AUTO_DEPS=1 bash /root/socks5-
 
 更新不会主动清空账号，但迁移访问日志配置可能短暂重启实例；更新后核对账号、配额和实际连接。原安装器没有通用卸载/降级子命令，失败回退使用已验证的整机快照，不编造 `socks5 uninstall`。
 
+**已有生产落地机安全升级核对顺序：** 先保存服务商快照及原账号列表、用量与本机端口，再核对四文件的 SHA/本地校验状态；只有在确实需要升级、获得授权并预留维护窗口时才执行 `update`。更新期间可能短暂重启实例，事后需核对原账号、配额、IP 占位、日志及真实连接。若保持原样且没有升级需求，**什么都不运行**。
+
+SOCKS5 的访问审计、`socks5-traffic --install` 与独立 `portbw` 均在落地机分别管理，不能把 HY2 VPS 上的 UDP/443 或临时节点端口作为 SOCKS5 本机 TCP 端口使用；两种协议在同一个仓库出现，不代表它们共享用户数据库或自动转发链路。
+
 ### 3. 每日流量与管理入口
 
 ```bash
@@ -1369,6 +1577,8 @@ curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu
 
 </details>
 
+**各组件的更新范围：** HY2 管理器、每日流量、portbw、WG/NAT、独立 SOCKS5 分别有自己的更新入口和状态目录。仅更新 `hy2.sh` 不意味着应修改共享生产 NAT Peer 或强制升级 SOCKS5；单独更新脚本前先核对版本和已保存状态。新部署与已有业务机器必须区分：`install` 可能初始化服务，`update`/`upgrade` 可能重启已有业务，`check`/`audit` 通常负责检查但也应先核实实际脚本接口。
+
 <a id="abuse-install"></a>
 
 <details>
@@ -1413,6 +1623,8 @@ hy2-abuse 40020 --days 7 \
 | HY2 配额/IP/节点状态 | `/var/lib/hy2/` | 包含节点密码 |
 | WireGuard | `/etc/wireguard/` | 两端分别备份，包含私钥 |
 | portbw | `/etc/portbw/`、`/var/lib/portbw/`、`/var/lib/portbw-resident-release/` | 独立的限速配置和备份 |
+| SOCKS5 独立落地机 | `/etc/socks5-manager/`、`/var/lib/socks5-manager/` | 只在可选 SOCKS5 落地机备份，含账号密码与使用状态 |
+| 日志与验收证据 | `journalctl`、本机 root 私有验收目录 | journald 可轮替，日志范围不等于永久完整历史 |
 
 <details>
 
@@ -1429,6 +1641,15 @@ bash /root/portbw-install.sh rollback
 </details>
 
 </details>
+
+**恢复与更新的安全边界：**
+
+1. 更新前先创建服务商控制台能够实际恢复的整机快照；GitHub 源码备份不等于服务器业务状态备份。
+2. HY2 主节点、受管理临时节点与证书、配额/IP 元数据分别备份，确认私钥和账号资料只保存在 root 私有目录，不要提交到 GitHub。
+3. 通用 `portbw` 的 `rollback` **只针对安装器识别的受管理版本**，与 HY2 核心回滚、SOCKS5 更新回退无关；不要错误地用一个组件的恢复命令处理另一个组件。
+4. SOCKS5 原安装器不提供通用 `uninstall` / `rollback`；涉及生产账号和日志变更，应使用预先验证的整机快照恢复，不能用旧脚本盲目覆盖。
+5. 核心或组件恢复后，应先核对规则、服务及真实客户端；保护规则缺失时应维持 fail-closed，不应为恢复连接而临时开放全部来源。
+6. 已完成的 Debian 13 真机测试与历史可复用证据见[本轮验收](#acceptance)，未测的真实 CA 续期、IPv6、72 小时/30 天长周期及异常断电仍应明确标记，不因 README 改写而变为“已通过”。
 
 <a id="release-notes"></a>
 
@@ -1449,6 +1670,17 @@ bash /root/portbw-install.sh rollback
 - `nat.sh init/add/del` 可能重启 NAT 机 WG，影响其他 Peer。
 
 </details>
+
+### 与原 README 对应的日常操作闭环
+
+以下顺序是**阅读指引**，不是建议对生产服务器自动执行的一串命令。`jieshu` 的查询、节点管理、配额/IP、暂停/黑名单、SOCKS5、WG/NAT 与限速说明分别在 HY2 的相同章节找到对应入口；对于协议不同或功能尚缺的项应按实际说明执行。
+
+1. **查询**：先查 `hy2_audit.sh`、`pq_audit.sh`、`hy2_doctor.sh --strict`，再选读按端口的流量、来源槽位、自动降速与异常审计。
+2. **创建**：明确普通还是 NAT 临时节点；设置 TTL、上传下载合计配额及来源 IP 数；创建后核对唯一 TAG、链接和真实客户端。
+3. **修改**：区分清零重设 `pq_add.sh`、保留周期的 `pq_keepcycle.sh`、IP 槽位、portbw 聚合 Mbps。本 README 另提供利用现有 HY2 配额库的一行“本期剩余调整”操作（尚未真机验收，见第三章）。
+4. **故障排查**：先查服务、UDP 监听、TLS/SNI、QUIC、证书、配额和黑名单；NAT 加查 Peer/握手/mark 路由。不要为了恢复而全局清空 nftables。
+5. **暂停/删除**：`hy2-guard` 的暂停和封禁作用于目标端口 TCP+UDP，`forget` 只清该端口手工防护，节点到期/删除才清相应受管生命周期资源。
+6. **安装/维护**：HY2 VPS 安装 HY2/必要时 WG，独立落地机手动安装 SOCKS5，已有生产 NAT 原样复用；各组件分开升级并保留安全回退手段。
 
 <a id="acceptance"></a>
 ### Debian 13 真机验收与 `jieshu` 功能对标
@@ -1475,6 +1707,47 @@ bash /root/portbw-install.sh rollback
 
 收尾时 `hy2_doctor.sh --strict` 为 **0 错误、1 警告**；警告是未设置 Hysteria 二进制 SHA256 校验。NAT 节点刚启动时允许因 WG 握手未就绪而安全拒绝监听，随后自动重试成功；不应把这一启动时序当作持续故障。
 
+### `jieshu` → `hy2jieshu` 逐段适用性对照索引
+
+母版以 `jieshu` 的 `f21b70d0` 版本为参考，保留其章节顺序；**此表是内容对应与协议边界的索引，不是声称两个不同协议具备一模一样的底层实现**。
+
+| jieshu 母版章节/锚点 | hy2jieshu 对应位置 | 内容转换或明确差异 |
+|---|---|---|
+| 1. 总览 / `#queries` | [查询与检查](#queries) | 节点审计、配额/IP、限速/日志、WG、SOCKS5 独立落地 |
+| 1. `#advanced-queries` | [补充查询](#advanced-queries) | 同一配额快照、核对本机限速、握手/路由 |
+| 1. `#socks5-query` | [SOCKS5 查询](#socks5-query) | 原样复用成熟 SOCKS5 命令；运行在落地机 |
+| 1. `#node-link` | [节点链接](#node-link) | `vless://` 改为 HY2 节点链接及凭据文件 |
+| 1. `#active-ips` | [来源 IP/UDP](#active-ips) | UDP/IP 槽位，不照抄 VLESS TCP established |
+| 1. `#daily-traffic` | [HY2 每日流量](#daily-traffic) | 用 HY2 UDP 计数器与相同按日查看体验 |
+| 1. `#speed-logs` | [自动降速日志](#speed-logs) | 同源 portbw 事件、端口/上行下行分离 |
+| 1. `#vless-audit` | [HY2 异常审计](#hy2-audit) | 现有 journal 警告、来源槽位、可选当前 TCP 目标；不伪造历史访问域名/UDP |
+| 1. `#socks5-daily` / `#socks5-access` | [SOCKS5 每日流量](#socks5-daily) / [访问审计](#socks5-access) | 原成熟源码可选，按实际日志保留时长查询 |
+| 1. `#subscription` | [临时节点订阅](#subscription) | 生成文件包含敏感 HY2 节点链接，不含主节点 |
+| 2. `#temp-create` | [临时节点创建](#temp-create) | 秒、分钟、小时、天、固定端口、IPv6、普通/NAT |
+| 2. `#socks5-create` | [SOCKS5 创建](#socks5-create) | 落地机分钟/小时/天/端口/公网映射 |
+| 3. `#quota-ip` | [配额/IP 修改](#quota-ip) | 已用清零、总配额与 IP 槽位均按 HY2 状态操作 |
+| 3. `#quota-keep-cycle` | [保留周期重设](#quota-keep-cycle) | HY2 已有独立保留周期脚本，**不是追加余额** |
+| 3. `#quota-set-current-remaining` | [本期剩余额度差异](#quota-set-current-remaining) | 使用 HY2 现有配额库提供独立的一行操作；不新增安装脚本；仅模拟验证，未进行真机验收 |
+| 3. `#quota-reset-time` | [重置时间](#quota-reset-time) | 读取 HY2 quota 元数据，不执行系统修改 |
+| 3. `#portbw` | [静态/自动限速](#portbw) | 同源码通用 portbw；HY2 UDP 与端口 TCP 共享限额 |
+| 4. `#trouble-guide` | [故障排查](#trouble-guide) | HY2 UDP/TLS/QUIC、系统服务、WG 防泄漏、guard |
+| 5. `#pause-port` | [暂停](#pause-port) | 使用 HY2 guard，作用于同数字端口 TCP+UDP |
+| 5. `#source-blacklist` | [来源黑名单](#source-blacklist) | IP/CIDR 封禁、逐条批量管理、独立恢复 |
+| 5. `#blacklist-report` | [黑名单状态](#blacklist-report) | `hy2-guard status` / `audit`，不复制 VLESS 规则 |
+| 5. `#node-manage` | [节点清理](#node-manage) | 只清当前受管临时节点，端口回收与元数据安全清理 |
+| 6. `#install` | [安装与更新](#install) | 每项先说明在哪台机器执行以及影响范围 |
+| 6. `#vless-install` | [HY2 主节点部署](#hy2-install) | 正式 TLS、Hysteria 核心、`hy2.service`、UDP/443 |
+| 6. `#wg-nat` | [WG/NAT 五步](#wg-nat) | 新 HY2 VPS 加独立 Peer；已验收生产 NAT 不覆盖 |
+| 6. `#daily-install` | [HY2 每日统计安装](#daily-install) | 读写 UDP 每日历史并保持与总配额独立 |
+| 6. `#portbw-install` | [portbw 安装更新](#portbw-install) | 同源安装器与静态/自动限速 |
+| 6. `#socks5` | [SOCKS5 可选安装](#socks5) | 四文件同目录下载、原安装器哈希不变 |
+| 6. `#maintenance` | [独立组件维护](#maintenance) | 已部署版本升级不等于重新初始化生产 NAT |
+| 6. `#abuse-install` | [HY2 审计安装](#abuse-install) | 只读工具，官方 Traffic Stats 仅当前 TCP；不照搬 VLESS 内嵌脚本 |
+| 6. `#backup-recovery` | [备份与回退](#backup-recovery) | HY2、WG、SOCKS5、portbw 各自保留独立状态与回退边界 |
+| 6. `#release-notes` | [版本与看门狗](#release-notes) | HY2 fail-closed、72h 宽限语义和实际验收边界 |
+
+**不适用项说明：** VLESS Reality UUID/密钥、Xray inbound 命令及 VLESS 审计脚本不能当作 HY2 命令。审计历史缺失属于协议与可用日志来源差异；“本期临时剩余额度调整”已提供基于现有库函数的 Bash 一行操作，但并非主安装器内置命令，且尚未真机验收。此表不表示已做新的真机测试或已经覆盖母版全部场景。
+
 <a id="feature-gap"></a>
 ### 与 `jieshu` 的共享能力、HY2 专属适配及遗留差距
 
@@ -1495,6 +1768,20 @@ bash /root/portbw-install.sh rollback
 `vpswg.sh` 是对 `jieshu/vpswg.sh` 的 HY2 适配版：大部分代码相同，但临时节点目录、锁和旧标记切换时的 fail-closed 保护不能直接替换回 VLESS 版本。旧机已有 VPS 重启记录；本轮另行完成当前新 VPS 的真实 NAT 出口、测试 VPS WG 停止阻断与握手后恢复，不代表所有版本混用或生产 NAT 冷重启均已通过。
 
 对标目标是达到类似的管理体验和验证标准，不承诺把其他协议模块直接塞进 HY2。新增或修改的行为须完成相应 CI 与必要真机回归，未验证项保持明确状态。
+
+#### README 与 `jieshu` 的对标判定口径
+
+| 对标层面 | 本项目的处理方式 |
+|---|---|
+| 六章顺序、导航、折叠操作、查询与故障步骤 | 以 `jieshu` 的阅读顺序组织；命令示例必须是本仓库实际提供的入口 |
+| VLESS/Reality 主节点与临时节点 | 替换为真正的 Hysteria2 TLS/QUIC、UDP 监听、密码认证与 HY2 生命周期管理 |
+| 配额/IP 限制/日统计/防护/看门狗 | 保留管理体验，但运行时的 UDP 元数据、nft 规则和服务名必须按 HY2 适配 |
+| SOCKS5 / portbw | SOCKS5 四源码及原审计测试与上游完全一致、作为独立落地机可选组件；通用 portbw 复用相同内核实现 |
+| WG/NAT 出口 | 复用 `jieshu` 已验收 NAT 端，HY2 VPS 只配置自己的 WireGuard Peer 和 HY2 临时节点 |
+| 访问目标与滥用审计 | HY2 提供来源槽位、journal 异常统计及可选的当前 TCP 流目标；未实现完整历史域名/UDP 目标时如实说明 |
+| 验收来源 | 当前 VPS、旧机与 SOCKS5 上游分别归档；本次文档修改**不会**自动验证新的业务场景 |
+
+**明确保留的协议差异：** VLESS Reality 的 UUID、公私钥、Xray inbound/TCP 检查不是 HY2 的配置；SOCKS5 独立账号不等于 Hysteria2 认证用户；Hysteria2 的 UDP/QUIC 也不能被描述成 SOCKS5 UDP ASSOCIATE（上游 SOCKS5 本身只实现 TCP CONNECT）。
 
 <details>
 <summary>历史验收与旧测试工具（旧主机，不代表当前 VPS）</summary>
