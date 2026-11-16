@@ -76,7 +76,7 @@ class ReadmeInstallLayout(unittest.TestCase):
         for snippet in (
             "已有 NAT 出口机已经通过 §/root/nat.sh§ 验收",
             "不覆盖原 §/root/nat.sh§",
-            "共享 WG 维护窗口",
+            "共享 WireGuard 维护窗口",
             "cat /etc/wireguard/wg-nat.pub",
             "/usr/local/sbin/wg_nat_healthcheck.sh",
         ):
@@ -99,7 +99,7 @@ class ReadmeInstallLayout(unittest.TestCase):
         ):
             self.assertIn(heading, maintenance)
         self.assertNotIn("hy2jieshu/main/nat.sh", maintenance)
-        self.assertIn("不需要升级或重装来支持 HY2", maintenance)
+        self.assertIn("不需要为了接入 HY2 而升级或重装", maintenance)
 
     def test_hy2_protocol_stays_specific_not_vless(self):
         self.assertIn("UDP/443", self.hy2)
