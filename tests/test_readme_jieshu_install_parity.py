@@ -1,4 +1,4 @@
-"""Read-only invariants for jieshu-style HY2 README chapter layout."""
+"""Read-only invariants for independent HY2 README chapter layout."""
 from pathlib import Path
 import re
 import unittest
@@ -23,7 +23,7 @@ class ReadmeInstallLayout(unittest.TestCase):
         cls.nat = between(cls.chapter, '<a id="wg-nat"></a>',
                           '<a id="daily-install"></a>')
 
-    def test_chapter_summaries_and_environment_match_jieshu(self):
+    def test_chapter_summaries_and_environment(self):
         self.assertIn("<summary>环境要求与各脚本运行位置</summary>",
                       self.env)
         self.assertIn("### 先确认运行位置", self.env)
@@ -35,7 +35,7 @@ class ReadmeInstallLayout(unittest.TestCase):
         self.assertEqual(self.chapter.count("<details>"),
                          self.chapter.count("</details>"))
 
-    def test_main_has_jieshu_four_step_order_and_copyable_commands(self):
+    def test_main_has_four_step_order_and_copyable_commands(self):
         steps = ["### 1. 安装", "### 2. 修改配置",
                  "### 3. 创建或更新主节点", "### 4. 怎样确认安装成功"]
         self.assertEqual([self.hy2.index(s) for s in steps],
@@ -65,7 +65,7 @@ class ReadmeInstallLayout(unittest.TestCase):
         steps = [
             "### 1. 初始化 NAT 出口机",
             "### 2. 配置 HY2 VPS",
-            "### 3. 在已有 jieshu NAT 机添加新 VPS",
+            "### 3. 在已有 NAT 出口机添加新 VPS",
             "### 4. 回到 HY2 VPS 执行回填命令",
             "### 5. 安装 WG-NAT 临时节点工具",
         ]
@@ -74,7 +74,7 @@ class ReadmeInstallLayout(unittest.TestCase):
         for name in ("nat.sh", "vpswg.sh", "natjichang.sh"):
             self.assertIn("bash -n /root/" + name, self.nat)
         for snippet in (
-            "已经安装并通过 §jieshu/nat.sh§ 验收",
+            "已有 NAT 出口机已经通过 §/root/nat.sh§ 验收",
             "不覆盖原 §/root/nat.sh§",
             "共享 WG 维护窗口",
             "cat /etc/wireguard/wg-nat.pub",
@@ -94,7 +94,7 @@ class ReadmeInstallLayout(unittest.TestCase):
             "#### HY2 VPS：更新管理工具",
             "#### HY2 VPS：更新每日流量统计",
             "#### HY2 VPS：更新 WireGuard / NAT 临时节点工具",
-            "#### NAT 出口机：沿用已验收的 jieshu",
+            "#### NAT 出口机：保留现有部署，不直接覆盖",
             "#### 通用 portbw：单独的受管理更新流程",
         ):
             self.assertIn(heading, maintenance)

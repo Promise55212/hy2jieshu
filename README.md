@@ -4,7 +4,7 @@
 
 [查询](#queries) · [新建节点](#create) · [修改与重置](#modify) · [排查](#trouble-guide) · [封禁与删除](#remove) · [安装与更新](#install)
 
-> 文档按 [jieshu README](https://github.com/liucong552-art/jieshu/blob/main/README.md) 的六章结构和操作顺序整理；HY2 命令、UDP/QUIC/TLS 及 WG-NAT/SOCKS5 边界按本仓库实际源码写明。真机证据见[验收](#acceptance)，卸载见[第五章](#uninstall)。
+> 本项目提供 Hysteria 2 主节点、临时节点、流量配额、来源 IP 管理，以及可选的 WG-NAT 出口、SOCKS5 落地、端口限速和使用审计工具。按章节查看命令及其适用范围；实测记录见[验收](#acceptance)，卸载方法见[第五章](#uninstall)。
 
 <a id="queries"></a>
 ## 一、查询与检查
@@ -139,7 +139,7 @@ fi
 
 <summary>查看来源 IP 占位与 UDP 监听</summary>
 
-`IP_LIMIT` 为活跃来源 IP 槽位，不是实际人数；HY2 用 UDP，不照搬 VLESS 的 TCP established 查询。
+`IP_LIMIT` 为活跃来源 IP 槽位，不代表实际人数。HY2 使用 UDP/QUIC，此处检查 UDP 监听，不提供 TCP `established` 连接清单。
 
 ```bash
 PORT=40020
@@ -156,7 +156,7 @@ ss -lunp | grep ":$PORT " || true
 <details>
 <summary>HY2 每日流量：今天、单端口最近 30 天、历史 JSON 导出</summary>
 
-**已实现独立可选组件**：从 `jieshu/traffic.py` 移植到 HY2 的 UDP 计数器、密码身份及主节点 `MAIN_PORT`。按北京时间自然日保存最近 30 天，`UP` 用户上传、`DOWN` 用户下载、`TOTAL` 当日合计；这是**独立的每日历史**，与 `pq_audit.sh` 的双向总配额互不冲突。必须先按 [6.3 安装每日流量](#daily-install)，安装前的历史流量无法补记。
+**每日流量统计为独立可选组件**：使用 HY2 UDP 双向计数器，并识别主节点及临时节点。按北京时间自然日保存最近 30 天；`UP` 为用户上传，`DOWN` 为用户下载，`TOTAL` 为当日合计。此处记录的是**每日流量历史**，不同于 `pq_audit.sh` 的双向总配额。必须先按 [6.3 安装每日流量](#daily-install)，安装前的历史流量不能补记。
 
 ```bash
 # 所有当前节点今天的上传、下载
@@ -179,7 +179,7 @@ hy2_traffic 40020 --json
 - 数据文件 `/var/lib/hy2/traffic/daily.json`，节点密码不保存到历史文件，只保存不可逆身份摘要；同名重建/端口复用、主节点密码轮换不会继承旧用户历史。
 - 每分钟定时采集；查询时也执行采集。自动删除/到期节点的历史会在下次成功采集时清理，保留 30 个北京时间自然日。
 - 采用**独立** `inet hy2_daily_traffic` nft 表，只统计该节点 UDP 端口双向字节，不修改 `hy2_pq` 或 `hy2_iplimit`。跨午夜分钟采样、断电尚未保存的尾部流量有少量归属/丢失风险，不能把它作为毫秒级结算系统。
-- 与 `jieshu` 一样配有定时采集和关机 `ExecStop` 保存服务。旧测试机已有实际读写及正常重启保留记录；当前新机结论单独记录在[本轮验收](#acceptance)，CI 不能代替真机。
+- 本组件包含定时采集和关机 `ExecStop` 保存机制。历史测试机已有实际读写及正常重启保留记录；本轮新机结论单独记录在[验收](#acceptance)，CI 不能代替真机测试。
 
 </details>
 
@@ -235,7 +235,7 @@ hy2-abuse 40020 --days 7 --json
 
 #### HY2 异常排查：按端口、日志类别与证据边界
 
-审计工具只读已存在的日志与运行态，不安装持续记录历史域名的代理，也**不会自动识别滥用者**。与 `jieshu` 的审计入口保持相同的“先查询、后判断”体验；采集机制仍遵循 Hysteria2 实际能力。
+审计工具只读取现有日志和运行状态，不安装历史域名采集代理，**不会自动识别或封禁滥用者**。应先核对日志和在线来源，再结合业务情况人工判断；未被记录的历史目标无法追溯。
 
 | 想知道什么 | HY2 VPS 的查询方式 | 能得出的结论 |
 |---|---|---|
@@ -593,7 +593,7 @@ bash /root/pq_keepcycle.sh 40020 0.48828125
 
 ### 临时修改本期剩余流量（下周期恢复原配额）
 
-与 `jieshu` 的[本期剩余额度一行调整](https://github.com/liucong552-art/jieshu/blob/f21b70d0f52f8f9cd6cbcc0a1fe4a8fd11b221fe/README.md#quota-set-current-remaining)对应，HY2 可以**直接复用已安装的 `/usr/local/lib/hy2/common.sh` 与 `quota-lib.sh`** 完成相同用途。不需要下载安装新脚本或重装 HY2；**此命令是 README 中的临时 Bash 操作，不代表仓库已有 `pq_set_remaining.sh` 可执行程序**。
+可使用本项目已安装的 `/usr/local/lib/hy2/common.sh` 与 `quota-lib.sh`，**一行设置当前周期的剩余额度**。无需下载额外脚本或重装 HY2。**这是 README 提供的临时 Bash 操作，不代表系统已安装 `pq_set_remaining.sh` 命令**；它会改写真实计费配额及 nft 规则，首次操作应先在专用测试节点验证。
 
 适用范围：**已有有效 30 天自动重置周期、尚未到期、原始配额正常的 HY2 受管临时节点**。例如原始总额度 200 GiB，本期希望**从此刻起还可使用 85 GiB**，只修改最前面的 `PORT=40020` 与 `LEFT_GIB=85` 两个值，其他内容完整复制到该 HY2 VPS 的 **root Bash 终端**。如果是短期节点、没有周期的节点、已到下次重置时间附近（60 秒内）或配额状态异常，命令会拒绝修改。**务必先确认真实端口和账号归属。**
 
@@ -728,7 +728,7 @@ portbw del 40001        # 仅取消端口限速，不删除 HY2 节点
 
 
 
-**HY2-NAT 真机测速（2026-11-04）：** `portbw set 40020 10 10`、`portbw report`、`portbw audit` 均正常，用户报告 v2rayN 测速通过，最后 `portbw del 40020` 正常取消。**这是旧主机对特定 HY2 链路的记录；通用自动触发与恢复复用同源码 `jieshu` 验收，不把旧主机当作当前 VPS。**
+**HY2-NAT 真机测速（2026-11-04）：** `portbw set 40020 10 10`、`portbw report`、`portbw audit` 均正常，客户端测速通过，最后 `portbw del 40020` 正常取消。**这只是历史测试机上特定链路的结果；自动降速与恢复的证据范围见[验收记录](#acceptance)，不等于当前 VPS 已完成同等高负载测试。**
 
 **节点回收：** HY2 临时节点到期或删除时，会调用共享 `portbw del`，只删除该节点端口已保存的策略。发现对应记录但 CLI 缺失或删除失败时，保留节点元数据并报告失败，修复后重试；不清理其他端口、不卸载共享 portbw。WG-NAT 使用 HY2 VPS 上节点入口的端口策略，同数字端口的 TCP + UDP 共用额度；不要把 NAT 出口机的 WG `51820` 当作单个 HY2 节点限速端口。
 
@@ -1073,7 +1073,7 @@ bash /root/hy2-uninstall.sh --yes --purge --remove-core
 - Cloudflare 等 DNS 服务必须为 **DNS only**，不能让 HY2 的 UDP 连接走普通网页代理。
 - 本文是 **Bash 命令**；域名、邮箱、公钥和 Peer 名称必须替换为真实值。
 
-> **部署位置固定：** `hy2.sh`、`vpswg.sh`、`natjichang.sh` 在**新 HY2 VPS** 上运行。`nat.sh` 仅在 **NAT 出口机** 使用。你已经验收的 `jieshu` NAT 直接共用，不下载、不覆盖、不重新安装 HY2 版 NAT。不同项目分别部署在不同 VPS，`helan` 测试机的数据不需要迁移。
+> **部署位置固定：** `hy2.sh`、`vpswg.sh`、`natjichang.sh` 在 **HY2 VPS** 上运行；`nat.sh` 只在 **NAT 出口机** 使用。已有正常运行的 NAT 出口机继续保留原配置和 Peer，不能为部署 HY2 重装管理器或覆盖 `/root/nat.sh`。各服务器按角色独立维护。
 
 ### 先确认运行位置
 
@@ -1082,9 +1082,9 @@ bash /root/hy2-uninstall.sh --yes --purge --remove-core
 | `hy2.sh` | 新 HY2 VPS | 安装主节点、普通临时节点和管理组件 |
 | `vpswg.sh` | 新 HY2 VPS | 配置 WG-NAT 的 VPS 端 |
 | `natjichang.sh` | 新 HY2 VPS | 安装 WG-NAT 临时节点工具 |
-| `nat.sh` | 已有 jieshu NAT 出口机 | 继续使用原管理器；只有新 VPS 缺少 Peer 时才正常新增 |
+| `nat.sh` | 独立 NAT 出口机 | 已部署则保留原管理器；仅在缺少 Peer 时按流程新增 |
 | `traffic.py` | 新 HY2 VPS | 可选：UDP 每日流量统计 |
-| `portbw-install.sh`、`portbw.py` | 需要限速的 VPS | 可选：直接复用 jieshu 已验收的通用源码 |
+| `portbw-install.sh`、`portbw.py` | 需要限速的 VPS | 可选：安装、管理和恢复端口限速策略 |
 | `hy2-guard.py`、`hy2-abuse.py` | 新 HY2 VPS | 可选：防火墙管理、异常审计 |
 | `socks5-install.sh`、`socks5.py`、`socks5-traffic.py`、`socks5-audit.py` | 独立 SOCKS5 落地机 | 手动选择安装：账号、配额、流量及访问审计 |
 
@@ -1095,7 +1095,7 @@ bash /root/hy2-uninstall.sh --yes --purge --remove-core
 | 部署角色 | 实际安装的协议或工具 | 不应在这台机盲目执行 |
 |---|---|---|
 | HY2 入口 VPS | Hysteria2、HY2 节点/配额/IP 管理、可选 guard/abuse/portbw、必要时 VPS 端 WG | 不自动安装独立 SOCKS5、不初始化生产 NAT 出口 |
-| WG/NAT 出口机 | 原有 `jieshu/nat.sh` 和 WireGuard Peer | 不覆盖已经验收的生产版 NAT 管理器；不为更新 HY2 重启共享 WG |
+| WG/NAT 出口机 | 独立 `nat.sh`、WireGuard 接口和 Peer | 保留原有 NAT 管理器及 Peer；不为更新 HY2 重启共享 WG |
 | SOCKS5 独立落地机 | 原样复用的 SOCKS5 安装器、账号、流量、访问审计；限速另行自选 portbw | 不运行 HY2 主安装器，SOCKS5 也不意味着 HY2 自动经 SOCKS5 转发 |
 
 > README 中的安装、重装、删除、`watch`、`restore`、`probe-*`、`systemctl restart` 等命令均为**操作示例**，不是文档校验过程中应自动执行的步骤。共享生产系统先做快照并安排维护窗口。
@@ -1168,7 +1168,7 @@ HYSTERIA_UPDATE_POLICY=install-only
 bash /root/onekey_hy2_main_tls.sh
 ```
 
-**重置 HY2 UDP/443 主节点认证密码（仅在确实需要轮换时执行）：** 和 `jieshu` 的 `ROTATE_CREDENTIALS=1` 对应，已有主节点默认保留密码；显式设置此参数后会生成新的 HY2 主节点密码、重新部署主节点并更新链接，**旧的主节点链接立即失效**。操作前应确认可安全中断现有主节点用户连接，并准备重新分发新链接；本操作不轮换临时节点密码、TLS 证书私钥或单独配置的 Salamander 混淆密码。
+**重置 HY2 UDP/443 主节点认证密码（仅在确实需要轮换时执行）：** 默认重新部署主节点会保留已有密码；显式设置 `ROTATE_CREDENTIALS=1` 后，生成新的主节点认证密码、重新部署并更新链接，**旧主节点链接立即失效**。操作前请确认可以中断现有连接，并准备重新分发新链接；该操作不轮换临时节点密码、TLS 证书私钥或独立配置的 Salamander 混淆密码。
 
 ```bash
 ROTATE_CREDENTIALS=1 bash /root/onekey_hy2_main_tls.sh
@@ -1215,7 +1215,7 @@ ss -lun '( sport = :443 )'
 hy2_doctor.sh --strict
 ```
 
-正常情况：`hy2.service` 显示 `active`、`ss` 能看到 **UDP/443** 监听，Doctor 不报告关键错误。HY2 使用 UDP，**不是** `jieshu` VLESS 使用的 TCP/443；不能照抄 `ss -ltn` 检查。
+正常情况：`hy2.service` 显示 `active`，`ss` 能看到 **UDP/443** 监听，Doctor 没有关键错误。HY2 使用 UDP/QUIC，应检查 UDP 端口，不要用只查询 TCP 的 `ss -ltn` 判断节点是否在线。
 
 然后将 `/root/hy2_main_url.txt` 中的完整 `hy2://` 链接导入 v2rayN 等兼容客户端，从**另一台设备**实际联网验证。**本机显示 active 和端口监听，不等于外部客户端一定可用。**
 
@@ -1228,11 +1228,11 @@ hy2_doctor.sh --strict
 <details>
 <summary>6.2 WG-NAT：完整五步部署、NAT 管理与 Peer 探测</summary>
 
-WG-NAT 让 HY2 VPS 上指定的临时节点通过另一台机器的公网 IPv4 出口访问互联网。**已验收的 `jieshu` NAT 直接复用**；下面的步骤 1 只用于尚未部署 NAT 的新机。新 HY2 VPS 需有自己的 WireGuard Peer，不能复制 `helan` 测试机的私钥。
+WG-NAT 让 HY2 VPS 上指定的临时节点通过独立 NAT 机器的公网 IPv4 出口访问互联网。**已有可用的 NAT 出口机无需重新初始化**；下面的步骤 1 仅适用于尚未部署 NAT 的新机器。每台新 HY2 VPS 必须拥有独立的 WireGuard 密钥与 Peer，不能复制其他服务器的私钥。
 
 ### 1. 初始化 NAT 出口机（只有全新、尚无 NAT 的机器才执行）
 
-**你的现有 NAT 机已经安装并通过 `jieshu/nat.sh` 验收：跳过此步，不执行 HY2 `nat.sh init`，不覆盖原 `/root/nat.sh`。** 共享 NAT 上执行 `init/add/del` 可能重启整个 WG 接口，影响其他 VPS。
+**已有 NAT 出口机已经通过 `/root/nat.sh` 验收时：跳过此步，不执行 `nat.sh init`，不覆盖原 `/root/nat.sh`。** 共享 NAT 上执行 `init/add/del` 可能重启整个 WireGuard 接口，影响其他 VPS。
 
 如果未来另建一台**完全空白** NAT 出口机，才在那台 NAT 机执行下面的**新安装**示例：
 
@@ -1241,7 +1241,7 @@ apt-get update && apt-get install -y curl ca-certificates
 curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/nat.sh' -o /root/nat.sh && chmod 700 /root/nat.sh && bash -n /root/nat.sh && bash /root/nat.sh init
 ```
 
-无法自动识别 WAN 网卡时，只在全新 NAT 机按实际名称指定 `WAN_IF=实际网卡`；不要从新机部署步骤反向修改现有 `jieshu` NAT。
+无法自动识别 WAN 网卡时，仅在全新 NAT 出口机按实际名称指定 `WAN_IF=实际网卡`；不要用新装步骤修改已经稳定运行的 NAT 出口机。
 
 ### 2. 配置 HY2 VPS
 
@@ -1257,7 +1257,7 @@ curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu
 cat /etc/wireguard/wg-nat.pub
 ```
 
-### 3. 在已有 jieshu NAT 机添加新 VPS
+### 3. 在已有 NAT 出口机添加新 VPS
 
 先在**原 NAT 出口机**查已有 Peer：
 
@@ -1265,7 +1265,7 @@ cat /etc/wireguard/wg-nat.pub
 bash /root/nat.sh list
 ```
 
-如果这台新 HY2 VPS 已有**公钥、地址都正确**的独立 Peer，不需要重复 `add`。如果还没有，在安排好共享 WG 维护窗口后，继续使用 **jieshu 原有 `nat.sh`** 添加新 Peer（Peer 名不可与其他 VPS 重复）：
+如果新 HY2 VPS 已有**公钥、地址都正确**的独立 Peer，不要重复 `add`。只有确实缺少 Peer 时，才在共享 WireGuard 维护窗口内使用 **NAT 机现有的 `/root/nat.sh`** 添加（Peer 名不可与其他 VPS 重复）：
 
 ```bash
 bash /root/nat.sh add hy2 hy2.example.com '这里替换成新HY2_VPS的WireGuard公钥'
@@ -1277,7 +1277,7 @@ bash /root/nat.sh add hy2 hy2.example.com '这里替换成新HY2_VPS的WireGuard
 - `hy2.example.com`：**新 HY2 VPS** 的公网 IPv4 域名或地址。
 - 第三个参数：在**新 HY2 VPS** 执行 `cat /etc/wireguard/wg-nat.pub` 得到的公钥，**不是** `helan` 的旧公钥。
 
-NAT 机会分配 WG 地址并输出 VPS 的完整回填命令。**`nat.sh add` 可能重启共享 WG，导致其他 Peer 短暂断线；不能当成无影响操作。** 现有探测规则、timer 和防火墙仍由 `jieshu` 管理，不部署第二套 HY2 NAT 管理器。
+NAT 机会分配 WG 地址并输出 VPS 的完整回填命令。**`nat.sh add` 可能重启共享 WG，导致其他 Peer 短暂断线。** 已有探测规则、timer 和防火墙继续由 NAT 机原有管理器维护，不再部署第二套 NAT 管理器。
 
 ### 4. 回到 HY2 VPS 执行回填命令
 
@@ -1315,7 +1315,7 @@ bash /root/natjichang.sh check
 
 ### NAT 出口机日常管理
 
-以下命令**仅在现有 jieshu NAT 出口机**执行，且使用它原有的 `/root/nat.sh`：
+以下命令**仅在现有 NAT 出口机**执行，使用该机器已经安装的 `/root/nat.sh`：
 
 #### 查询已有 Peer 与运行状态
 
@@ -1335,9 +1335,9 @@ bash /root/nat.sh add hy2 hy2.example.com '新的VPS的WireGuard公钥'
 bash /root/nat.sh del hy2
 ```
 
-### 单 Peer 探测（可选，直接复用 jieshu）
+### 单 Peer 探测（可选）
 
-**这部分已经在 `jieshu` NAT 项目验收过，不必为 HY2 再安装探测器、切换探测管理器或重复测试。** 必须查看某个 Peer 的状态时，仍在 NAT 机使用原版命令：
+已有 NAT 出口机如果配置了 Peer 探测，就使用当前管理器查询状态，**不要因部署 HY2 重装探测器或调整正在正常运行的 timer**。相关状态需要在目标 NAT 机器上核对：
 
 ```bash
 bash /root/nat.sh probe-once hy2
@@ -1353,7 +1353,7 @@ bash /root/nat.sh probe-status hy2
 | `bash /root/nat.sh probe-status hy2` | 查询指定 Peer 探测状态 | 优先使用，避免改变已有 timer |
 | `bash /root/nat.sh probe-once hy2` | 主动尝试发送一次探测 | 不是只读；是否成功应再看握手和真实出口 |
 | `bash /root/nat.sh probe-enable hy2` | 为指定 Peer 启用探测 | 可能更改定时器；仅在明确授权和维护窗口执行 |
-| `bash /root/nat.sh probe-disable hy2` | 为指定 Peer 禁用探测 | 会改变已有监控行为；不为了 HY2 对标随意执行 |
+| `bash /root/nat.sh probe-disable hy2` | 为指定 Peer 禁用探测 | 会改变监控行为；没有明确维护需求不应执行 |
 
 运行 `list` / `status` 前先确认登录的是**落地 NAT 出口机**，不是新 HY2 VPS。共享出口机已有真实用户时，不执行 `init`、无目的的 `add` / `del`、WG 重启或“为了演示命令”的探测操作；新 VPS 的独立 Peer 已存在就直接复用。
 
@@ -1483,9 +1483,9 @@ portbw audit
 
 <summary>6.5 SOCKS5：独立可选落地、首次安装、更新与每日流量</summary>
 
-四个模块原样复制自 `jieshu` 的 `89c5508`，仅作为**独立落地机上手动选择安装**的可选功能。`hy2.sh` / `nat.sh` / `vpswg.sh` / `natjichang.sh` 不自动安装 SOCKS5，也不让 HY2 流量自动经过 SOCKS5。SOCKS5 仅支持 TCP CONNECT，不支持 UDP ASSOCIATE。
+本仓库提供一套可选的 SOCKS5 管理工具，**仅用于独立落地机手动安装**。`hy2.sh`、`nat.sh`、`vpswg.sh`、`natjichang.sh` 均不会自动安装 SOCKS5，也不会让 HY2 流量自动经过 SOCKS5。此模块只支持 TCP CONNECT，不支持 UDP ASSOCIATE。
 
-**验收复用：** 直接沿用 [jieshu README 的 SOCKS5 安装说明](https://github.com/liucong552-art/jieshu/blob/89c5508/README.md#socks5)及[历史审计验收记录](https://github.com/liucong552-art/jieshu/blob/89c5508/tests/SOCKS5_AUDIT_REAL_MACHINE_ACCEPTANCE.md)，不新增本轮 HY2 VPS 实测结论、不重复部署或功能测试。上游记有 Debian 12 真机及 Debian 13 暂存检查，也保留干净安装/升级等未覆盖边界；不能扩大为所有系统均通过。
+**验收范围：** SOCKS5 工具的历史验证和源码校验见[组件复用与完整性记录](docs/SOCKS5_UPSTREAM_REUSE.md)。独立 SOCKS5 落地机未在本轮 HY2 VPS 上重新部署或进行完整功能测试，不能因此声称所有 Debian/Ubuntu 版本和升级场景均已通过。
 
 ### 1. 四文件同目录下载
 
@@ -1513,7 +1513,7 @@ curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/
 bash -n /root/socks5-release/socks5-install.sh && AUTO_DEPS=1 bash /root/socks5-release/socks5-install.sh install
 ```
 
-原安装器优先读取自身目录的三个模块，并在安装前执行内置 SHA256 校验；必须看到 `[socks5] SHA256 校验通过`，不匹配就停止核对四文件，不能跳过校验。由于安装器也保持原样，若同目录文件不全，它的远程 fallback **仍指向 `jieshu/main`**（或原允许的审计分支），没有改成 HY2；上面的四文件流程使用本仓库配套本地模块。
+安装器优先使用自身目录内的三个配套模块，并在安装前校验 SHA256；必须看到 `[socks5] SHA256 校验通过`。不匹配应立即停止检查文件版本，不可跳过校验。**安装器仍保留独立的预设远程备用来源，并不保证回退至本仓库**；因此必须按上面的步骤下载齐全四个同版本文件，以优先使用本仓库配套的本地模块。
 
 家宽路由器后的主机可在 `install` 后加 `--host proxy.example.com` 指定真实公网入口；必要时加 `--wan-if 实际网卡`。账号的公网/本机端口映射按[新建 SOCKS5 账号](#socks5-create)设置。
 
@@ -1577,7 +1577,7 @@ hy2_traffic
 
 #### HY2 VPS：更新 WireGuard / NAT 临时节点工具
 
-这些脚本**只在 HY2 VPS** 执行，不是 NAT 出口机的更新。WG 脚本可能调整路由与接口配置；已经正常运行时，不要为对标而盲目覆盖，确实需要升级再安排维护窗口：
+这些脚本**只在 HY2 VPS** 执行，不是 NAT 出口机的更新。WG 脚本可能调整路由与接口配置；服务稳定时不应盲目覆盖，确需升级应安排维护窗口：
 
 ```bash
 curl -fsSL --retry 3 \
@@ -1595,9 +1595,9 @@ bash -n /root/natjichang.sh && bash /root/natjichang.sh
 
 更新后用 `wg_nat_healthcheck.sh` 与 `natjichang.sh check` 核实；现有 Peer 公钥、AllowedIPs 与 NAT 映射必须保持正确。
 
-#### NAT 出口机：沿用已验收的 jieshu，禁止 HY2 覆盖
+#### NAT 出口机：保留现有部署，不直接覆盖
 
-**现有 `jieshu` NAT 不需要升级或重装来支持 HY2。** 与 `jieshu` 6.6 一致，这里严格区分“查看已有状态”“备份”“更新管理文件”和“重新初始化 WG”；前两项不应触发 WG 重启，后两项应由 NAT 管理员单独在维护窗口操作。**不要在生产 NAT 上执行 HY2 版本的 `nat.sh init`，也不要安装第二套探测 timer。**
+**现有 NAT 出口机不需要为了接入 HY2 而升级或重装。** 必须区分“查看已有状态”“备份”“更新管理文件”与“重新初始化 WG”：检查和备份不应导致 WG 重启；后两项必须由 NAT 管理员在维护窗口实施。**不要在生产 NAT 上重复执行 `nat.sh init`，也不要安装第二套探测 timer。**
 
 <details>
 <summary>NAT 出口机：只读检查现有脚本、接口与 Peer（不执行 init）</summary>
@@ -1610,7 +1610,7 @@ bash /root/nat.sh status
 wg show wg-exit
 ```
 
-`sha256sum` 只显示当前已安装文件的哈希；要比对上游版本，按 [`jieshu` 原 README 的 6.6](https://github.com/liucong552-art/jieshu/blob/main/README.md#maintenance) 先取得同版本候选文件后比较。不同哈希**不是**应立即覆盖生产 NAT 的理由。
+`sha256sum` 只显示当前已安装脚本的哈希，并不自动判断是否需要升级。若要与候选新版本比较，必须先取得来源和版本明确的候选文件，再计算哈希、审查变更并做好备份。哈希不同**不是**立即覆盖生产 NAT 的理由。
 
 </details>
 
@@ -1631,7 +1631,7 @@ iptables-save > "/root/wg-backups/iptables-${BACKUP_TS}.rules"
 
 #### 通用 portbw：单独的受管理更新流程
 
-`portbw.py` 与 `portbw-install.sh` 在 `jieshu` 和 HY2 仓库源码完全相同。已经安装的受管理版本使用上面 [6.4 portbw 安装与升级](#portbw-install) 的 `preflight-upgrade → upgrade → verify`，**不可在已有版本上重新执行首次安装 `install`**；不需要为 HY2 再开发、重测通用限速算法。
+`portbw.py` 与 `portbw-install.sh` 是本仓库提供的通用限速组件。已有受管理版本应按 [6.4 portbw 安装与升级](#portbw-install) 的 `preflight-upgrade → upgrade → verify` 顺序维护，**不要在已安装的环境重新执行首次安装 `install`**。升级前核对当前策略与管理记录，并完成备份。
 
 </details>
 
@@ -1715,15 +1715,15 @@ bash /root/portbw-install.sh rollback
 
 <summary>版本说明与看门狗运行规则</summary>
 
-旧测试机在 2026-11-04 Debian 13 真机已验证 HY2 主/临时节点、双向配额、来源 IP 限制、到期清理、WG-NAT 出口、断线防泄漏、VPS 重启恢复和 `portbw` 静态 10/10 Mbps。通用 portbw 的自动触发与恢复复用 `jieshu` 同源码历史验收；旧记录不代表当前 VPS 的端到端持续吞吐已经测试。
+历史测试机在 2026-11-04 Debian 13 环境中验证了 HY2 主/临时节点、双向配额、来源 IP 限制、到期清理、WG-NAT 出口、断线防泄漏、VPS 重启恢复和 `portbw` 静态 10/10 Mbps。自动触发与恢复的历史验证范围见[组件审计](tests/SHARED_COMPONENT_AUDIT_2026-11-05.md)；旧记录不代表当前 VPS 已完成持续高负载测试。
 
-首次安装后配额重启归零问题由 [首次关机保存修复](https://github.com/liucong552-art/hy2jieshu/commit/893bb2dc25cc96bd7076849385d79ebefd730952) 修复；通用 portbw 与 jieshu 源码一致，由 [通用 portbw 引入提交](https://github.com/liucong552-art/hy2jieshu/commit/ab009ef736dc77c3cf6cf00f724867902ae89c04) 原样引入。
+首次安装后配额重启归零问题由 [首次关机保存修复](https://github.com/liucong552-art/hy2jieshu/commit/893bb2dc25cc96bd7076849385d79ebefd730952) 修复；通用限速组件的引入与适配记录见[项目提交](https://github.com/liucong552-art/hy2jieshu/commit/ab009ef736dc77c3cf6cf00f724867902ae89c04)。
 
 ### 看门狗与生产运行规则
 
 - **HY2 临时节点 Watchdog 72 小时宽限：** 第三次连续恢复失败后，才开始一次持久化的 72 小时宽限期。系统重启/手工重启服务不重置 `WATCHDOG_GRACE_START_EPOCH`；只有服务、端口监听、全部配额/IP 防护，且 NAT 节点的 WG 路由/握手均被重新核实为健康，才清空失败次数和宽限计时。
 - **宽限期间仍然 fail-closed：** 若缺失 nft 防护，停掉监听并保留节点；若 WG 无有效握手，恢复失败的 NAT 节点不允许继续监听，不能改走 VPS 公网。
-- **到期处理：** 自然 TTL 到期按原规则正常删除；72 小时宽限结束后，只有再次恢复失败且本次启动已稳定至少 300 秒，才执行最终节点清理。这与 `jieshu` 的持久宽限理念一致，但**尚需在专用临时节点上做跨重启/超过 72h 或模拟时钟的验收**，GitHub CI 不等于真实故障链路。
+- **到期处理：** 自然 TTL 到期按原规则正常删除；72 小时宽限结束后，只有再次恢复失败且本次启动已稳定至少 300 秒，才执行最终节点清理。**仍需在专用临时节点上进行跨重启、完整 72 小时或模拟时钟验收**，GitHub CI 不能代替真实故障链路验证。
 - `portbw` 是共享组件；HY2 节点删除/到期只清理对应端口策略，失败保留元数据供重试，其他端口不受影响。
 - `nat.sh init/add/del` 可能重启 NAT 机 WG，影响其他 Peer。
 
@@ -1745,17 +1745,17 @@ bash /root/portbw-install.sh rollback
 本期剩余额度一行命令目前只有隔离模拟验证，**没有真实 VPS 验收**；不能把 GitHub CI 成功当作真机业务确认。
 
 <a id="feature-gap"></a>
-### HY2 与 jieshu 的必要差异
+### 组件能力与使用边界
 
-| 模块 | HY2 本仓库实际能力 | 不应照搬的内容 |
+| 组件 | 本项目提供的能力 | 使用前需要注意 |
 |---|---|---|
-| 主节点 / TLS | Hysteria2、正式 TLS、UDP/443、主密码轮换 | VLESS Reality UUID、Short ID、Xray TCP 入站 |
-| 临时节点 / 流量 | 独立密码、TTL、IP 槽位、UDP nft 配额、每日统计 | VLESS 的配额文件、Xray 服务名和旧一行内部函数 |
-| 出口 / WG-NAT | HY2 VPS 独立 Peer、握手前拒绝启动及路由防泄漏 | 覆盖或重新初始化已有生产 NAT |
-| 端口控制 | 共享 `portbw`、HY2 guard 暂停和 IP/CIDR 黑名单 | 复制 `jieshu` 另一套 nft 表或原始账号体系 |
-| SOCKS5 | 可选独立落地机，复用上游管理器、配额与审计 | 把 SOCKS5 安装进 HY2 入口脚本或宣称支持 UDP ASSOCIATE |
-| HY2 滥用审计 | 来源 IP 占位、journal 异常、可选实时 TCP 目标 | 完整历史访问域名、历史 UDP 目标及自动判定恶意用户 |
+| HY2 主节点 / TLS | Hysteria 2、正式 TLS、UDP/443、主节点密码轮换 | 轮换后旧链接失效；证书、SNI 和公网 UDP 放行需核对 |
+| 临时节点 / 配额 | 独立密码、到期时间、IP 槽位、UDP 双向总配额及每日统计 | 当日流量历史与总配额不同；本期余额调整尚未真机验收 |
+| WG-NAT | 独立 Peer、WireGuard 路由、握手检查和出口防泄漏 | 生产 NAT 不因 HY2 更新而重新初始化；配置前须确认 Peer |
+| 防火墙与限速 | `hy2-guard` 端口暂停、IP/CIDR 黑名单及 `portbw` 带宽控制 | 规则覆盖指定数字端口；避免误用 SSH 管理端口 |
+| 独立 SOCKS5 | 可选的单独落地机账号、配额、流量和访问审计 | 需单独手动安装，仅 TCP CONNECT，不支持 UDP ASSOCIATE |
+| 访问与异常审计 | 来源 IP 占位、journal 异常分类、可选实时 TCP 目标 | 不提供完整历史访问域名、UDP 历史目标或自动处罚 |
 
-各项完整证据另见[共享组件审计](tests/SHARED_COMPONENT_AUDIT_2026-11-05.md)、[旧版验收与迁移说明](docs/LEGACY_ACCEPTANCE_GUIDE.md)以及上面的本轮报告。本 README 提供可执行操作和清楚的适用边界，不以冗长的“对标索引”替代逐段说明。
+功能验证与未覆盖项分别见[本轮真机报告](tests/REAL_MACHINE_ACCEPTANCE_2026-11-15.md)、[组件复用审计](tests/SHARED_COMPONENT_AUDIT_2026-11-05.md)和[历史验收记录](docs/LEGACY_ACCEPTANCE_GUIDE.md)。
 
-仅在自己拥有或获授权的机器使用。特别注意：生产 NAT 的 WG 配置、已有 Peer 和现有独立 SOCKS5 服务均不因 HY2 README 更新而改变。
+仅在自己拥有或已获授权的服务器使用。NAT 机原有 WireGuard 配置、Peer 以及独立 SOCKS5 的用户状态都不会因 README 变化而自动更新。
