@@ -1163,6 +1163,14 @@ HYSTERIA_UPDATE_POLICY=install-only
 bash /root/onekey_hy2_main_tls.sh
 ```
 
+**重置 HY2 UDP/443 主节点认证密码（仅在确实需要轮换时执行）：** 和 `jieshu` 的 `ROTATE_CREDENTIALS=1` 对应，已有主节点默认保留密码；显式设置此参数后会生成新的 HY2 主节点密码、重新部署主节点并更新链接，**旧的主节点链接立即失效**。操作前应确认可安全中断现有主节点用户连接，并准备重新分发新链接；本操作不轮换临时节点密码、TLS 证书私钥或单独配置的 Salamander 混淆密码。
+
+```bash
+ROTATE_CREDENTIALS=1 bash /root/onekey_hy2_main_tls.sh
+```
+
+轮换成功后，新链接保存在 `/root/hy2_main_url.txt`，Base64 文件在 `/root/hy2_main_subscription_base64.txt`。这些文件都包含敏感凭据，只在可信环境中查看与分发；执行失败先检查日志和回滚状态，不要盲目重复轮换。**普通更新无需设置 `ROTATE_CREDENTIALS`。**
+
 **这一步才会实际部署主节点。** 以后日常重新应用主节点，默认按配置的 `install-only` 策略复用已安装的 Hysteria 核心；切换域名之前应先完成新 DNS 和证书条件。
 
 部署成功后查看主节点链接：
