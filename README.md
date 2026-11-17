@@ -14,7 +14,8 @@
 | 主节点、临时节点、到期、配额、IP 占用 | HY2 VPS | `hy2_audit.sh` |
 | 某端口配额归属、已用量、剩余量、重置周期 | HY2 VPS | `pq_audit.sh` |
 | 端口监听、TLS、WG 出口和管理组件 | HY2 VPS | `hy2_doctor.sh --strict` |
-| 指定临时节点状态 | HY2 VPS | `hy2_audit.sh --tag hy2-temp-节点名称` |
+| 指定端口临时节点状态及日志 | HY2 VPS | [按端口查状态与日志](#port-log)（只修改端口） |
+| 按端口强制删除临时节点 | HY2 VPS | [按端口删除](#node-manage)（只修改端口，不影响主节点） |
 | 刷新临时节点订阅 | HY2 VPS | `hy2_temp_sub.sh` |
 | WG 状态与握手（只读） | HY2 VPS | `wg show wg-nat`；主动出口与防护检查见 [WG-NAT](#wg-nat) |
 | Peer 列表 / NAT 出口机状态 | NAT 机 | `bash /root/nat.sh list` / `bash /root/nat.sh status` |
@@ -111,25 +112,33 @@ socks5 audit 41004
 <a id="node-link"></a>
 
 <details>
+<summary>按端口查询 HY2 节点链接（只改 PORT）</summary>
 
-<summary>按端口查询 HY2 节点链接</summary>
-
-修改第一行端口。输出包含密码，不要提交到 GitHub。
+在 **HY2 VPS** 的 root Bash 中执行。仅修改第一行的 `PORT=40020`，程序会从现有主节点元数据读取实际监听端口，不假定主节点永远是 443。返回的 `hy2://` 链接包含密码，请勿公开。
 
 ```bash
 PORT=40020
-if [[ "$PORT" == 443 ]]; then
-  cat /root/hy2_main_url.txt
-else
-  mapfile -t m < <(grep -l "^PORT=$PORT$" /var/lib/hy2/temp/*.env 2>/dev/null)
-  if (( ${#m[@]} == 1 )); then
-    cat "${m[0]%.env}.url"
+(
+  set -Eeuo pipefail
+  [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( 10#$PORT <= 65535 )) || {
+    echo "无效端口" >&2
+    exit 1
+  }
+  source /usr/local/lib/hy2/common.sh
+  if [[ "$PORT" == "$(hy2_main_port)" ]]; then
+    LINK=/root/hy2_main_url.txt
   else
-    echo "未找到唯一端口对应的节点，请检查 hy2_audit.sh"
+    META="$(hy2_temp_meta_by_port "$PORT")"
+    [[ -n "$META" && -f "$META" ]] || hy2_die "未找到此端口的受管临时节点"
+    TAG="$(hy2_meta_get "$META" TAG)"
+    LINK="$(hy2_temp_url_file "$TAG")"
   fi
-fi
-
+  [[ -s "$LINK" ]] || hy2_die "链接文件不存在或为空：$LINK"
+  cat "$LINK"
+)
 ```
+
+没有匹配节点、同端口存在多个不一致元数据、链接文件缺失时应报错并停止；不要通过猜测 TAG 或拼凑密码来生成链接。
 
 </details>
 
@@ -838,6 +847,21 @@ systemctl start hy2-managed-watchdog.service
 
 只读检查完成后，才考虑确有必要的服务恢复。服务器有真实用户时，不应把“功能已在 CI 通过”当作允许立即重启或重装的理由。恢复后需核查实际客户端连接，不以 `systemctl active` 单独认定公网业务正常。
 
+<a id="port-log"></a>
+
+<details>
+<summary>按端口查询 HY2 临时节点状态及最近 100 条日志（只改 PORT）</summary>
+
+在 HY2 VPS 的 root Bash 执行，**只需改最前面的 `PORT=40020`**；无需知道节点 TAG。查询通过受管节点元数据定位唯一的临时服务，不会重启或删除节点。日志可能含敏感信息，公开分享前先清除地址、凭据等内容。
+
+```bash
+PORT=40020 bash -c 'set -Eeuo pipefail; [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( 10#$PORT <= 65535 )) || { echo "端口无效" >&2; exit 1; }; source /usr/local/lib/hy2/common.sh; META="$(hy2_temp_meta_by_port "$PORT")"; [[ -n "$META" && -f "$META" ]] || hy2_die "不是受管HY2临时节点"; TAG="$(hy2_meta_get "$META" TAG)"; /usr/local/sbin/hy2_audit.sh --tag "$TAG"; TZ=Asia/Shanghai journalctl -u "${TAG}.service" -n 100 --no-pager'
+```
+
+主节点日志另用 `journalctl -u hy2.service -n 100 --no-pager` 查询；主节点不能按临时节点方式删除。如果是配额异常，先运行 `pq_audit.sh 40020`，不要直接把日志错误理解为配额耗尽。
+
+</details>
+
 <a id="service-management"></a>
 
 <details>
@@ -984,41 +1008,29 @@ systemctl is-active hy2-manual-guard.service
 <a id="node-manage"></a>
 
 <details>
+<summary>按端口强制删除 HY2 临时节点 / 清空全部临时节点</summary>
 
-<summary>删除指定 HY2 临时节点 / 清空全部临时节点</summary>
+### 按端口强制删除临时节点
 
-删除临时节点会使对应链接失效，清理其配额/IP 规则、本端口的手工暂停/黑名单及已保存的 portbw 策略；不会删除 HY2 主节点、WireGuard 或其他端口策略。限速 CLI 缺失或删除失败时会报错并保留节点元数据，修复后重试。清理前先运行 `hy2_audit.sh` 确认完整 TAG。
-
-#### 强制删除一个临时节点
-
-先运行 `hy2_audit.sh` 找到完整 TAG，然后执行：
+**在 HY2 VPS 以 root 身份执行，直接按端口删除，不需要查 TAG。** 只修改最前面的 `PORT=40020` 为实际临时节点端口。删除会立即断开该节点连接并使链接失效，清理对应的配额、来源 IP 限制、手工暂停/黑名单及已保存的 portbw 端口策略；不会删除主节点或其他端口节点。执行前先用 `hy2_audit.sh` 确认端口归属。
 
 ```bash
-FORCE=1 hy2_cleanup_one.sh hy2-temp-节点名称
+PORT=40020 bash -c 'set -Eeuo pipefail; [[ "$(id -u)" == 0 ]] || { echo "需要 root" >&2; exit 1; }; [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( 10#$PORT <= 65535 )) || { echo "端口无效" >&2; exit 1; }; source /usr/local/lib/hy2/common.sh; hy2_ensure_runtime_dirs; hy2_acquire_lock_fd 7 "${HY2_LOCK_DIR}/temp.lock" 120 "节点锁繁忙"; export HY2_TEMP_LOCK_HELD=1; META="$(hy2_temp_meta_by_port "$PORT")"; [[ -n "$META" && -f "$META" ]] || hy2_die "未找到该端口的受管临时节点（不会删除主节点）"; TAG="$(hy2_meta_get "$META" TAG)"; [[ "$(hy2_meta_get "$META" PORT)" == "$PORT" && "$META" == "$(hy2_temp_meta_file "$TAG")" ]] || hy2_die "端口归属异常"; printf "正在删除端口 %s 的临时节点 %s\\n" "$PORT" "$TAG"; FORCE=1 HY2_TEMP_LOCK_HELD=1 /usr/local/sbin/hy2_cleanup_one.sh "$TAG"; [[ ! -e "$META" ]] || hy2_die "删除未完成，请检查残留"; echo "端口 $PORT 的临时节点已删除"'
 ```
 
-普通临时节点与 WG-NAT 临时节点使用同一清理命令。
+**安全边界：** 脚本使用与节点创建、删除相同的 `temp.lock`，并调用仓库已有的 `hy2_temp_meta_by_port` 校验唯一归属。如果端口不存在、只属于主节点、出现重复端口元数据或锁被占用，就拒绝删除；不会仅靠 `grep` 猜测 TAG。若端口的元数据已丢失，不能通过端口自动定位，请先只读排查并恢复受管状态，不能盲目删除服务文件。
 
-#### 清空全部临时节点
+成功后再次执行 `hy2_audit.sh` 和 `portbw report` 核查结果；如果清理遇到限速器等依赖故障，可能保留节点元数据以供修复，**不要把非零退出视为删除成功**。
+
+### 清空全部临时节点
+
+**下方命令会删除所有受管 HY2 临时节点，不应替代单端口删除。**
 
 ```bash
 hy2_clear_all.sh
 ```
 
-批量清理会尝试各个受管临时节点，任一节点未清理成功时返回非零；不能把有残留的批次当作清空成功。
-
-</details>
-
-<details>
-<summary>删除可选 SOCKS5 账号</summary>
-
-在独立落地机按本机监听端口删除；不会删除 HY2 节点。需要撤销该端口的独立限速时再手动删除对应 portbw 策略：
-
-```bash
-socks5 del 41004
-```
-
-HY2 的 `hy2_cleanup_one.sh`、`hy2_clear_all.sh` 及 `hy2-uninstall.sh` 不负责 SOCKS5 账号或模块；不要用 HY2 管理命令代替 SOCKS5 命令。
+若部分节点清理失败，命令返回非零并保留未完成的元数据；主节点不受该命令影响。
 
 </details>
 

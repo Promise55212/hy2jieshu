@@ -107,6 +107,40 @@ class ReadmeInstallLayout(unittest.TestCase):
         self.assertNotIn("onekey_reality_ipv4", self.hy2)
         self.assertNotIn("\nss -ltn", self.hy2)
 
+    def test_port_first_operations_are_copyable_and_unique(self):
+        import subprocess
+
+        doc = DOC.read_text(encoding="utf-8")
+        section = between(doc, '<a id="node-manage"></a>',
+                          '<a id="uninstall"></a>')
+        self.assertIn("### 按端口强制删除临时节点", section)
+        self.assertNotIn("先运行 `hy2_audit.sh` 找到完整 TAG", section)
+        self.assertIn("hy2_temp_meta_by_port", section)
+        self.assertIn("HY2_TEMP_LOCK_HELD=1", section)
+        self.assertIn('hy2_cleanup_one.sh "$TAG"', section)
+        self.assertIn("PORT=40020 bash -c", section)
+        match = re.search(r"```bash\n(PORT=40020 bash -c '[^\n]+')\n```",
+                          section)
+        self.assertIsNotNone(match)
+        result = subprocess.run(["bash", "-n", "-c", match.group(1)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        link = between(doc, '<a id="node-link"></a>',
+                       '<a id="active-ips"></a>')
+        self.assertIn('hy2_main_port', link)
+        self.assertIn('hy2_temp_meta_by_port "$PORT"', link)
+        self.assertNotIn('[[ "$PORT" == 443 ]]', link)
+
+        port_log = between(doc, '<a id="port-log"></a>',
+                           '<a id="service-management"></a>')
+        self.assertIn('hy2_temp_meta_by_port "$PORT"', port_log)
+        self.assertIn('journalctl -u "${TAG}.service"', port_log)
+        self.assertIn("[按端口查状态与日志](#port-log)", doc)
+        self.assertIn("[按端口删除](#node-manage)", doc)
+        self.assertIn("hy2_temp_meta_by_port()", (DOC.parent / "hy2.sh").read_text(encoding="utf-8"))
+
+
 
 if __name__ == "__main__":
     unittest.main()
