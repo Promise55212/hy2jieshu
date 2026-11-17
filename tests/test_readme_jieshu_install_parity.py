@@ -101,6 +101,40 @@ class ReadmeInstallLayout(unittest.TestCase):
         self.assertNotIn("hy2jieshu/main/nat.sh", maintenance)
         self.assertIn("不需要为了接入 HY2 而升级或重装", maintenance)
 
+    def test_hysteria_core_version_is_readable_and_no_xray_command(self):
+        doc = DOC.read_text(encoding="utf-8")
+        section = between(doc, '<a id="hy2-install"></a>',
+                          '<a id="wg-nat"></a>')
+        self.assertIn("hysteria version | head -n 1", section)
+        self.assertIn("HYSTERIA_FORCE_UPDATE=1 HYSTERIA_VERSION=", section)
+        self.assertNotIn("/usr/local/bin/xray version", doc)
+        code = (DOC.parent / "hy2.sh").read_text(encoding="utf-8")
+        self.assertIn('"$HY_BIN" version', code)
+
+    def test_reference_sections_are_present_and_ordered(self):
+        doc = DOC.read_text(encoding="utf-8")
+        anchor_order = [
+            "queries", "advanced-queries", "socks5-query", "node-link",
+            "active-ips", "daily-traffic", "speed-logs", "hy2-audit",
+            "socks5-daily", "socks5-access", "subscription", "create",
+            "temp-create", "socks5-create", "modify", "quota-ip",
+            "quota-keep-cycle", "quota-set-current-remaining",
+            "quota-reset-time", "portbw", "troubleshooting", "trouble-guide",
+            "remove", "port-block", "pause-port", "source-blacklist",
+            "blacklist-report", "node-manage", "install", "hy2-install",
+            "wg-nat", "daily-install", "portbw-install", "socks5",
+            "maintenance", "abuse-install", "backup-recovery",
+            "release-notes",
+        ]
+        offsets = [doc.index('<a id="' + name + '"></a>') for name in anchor_order]
+        self.assertEqual(offsets, sorted(offsets))
+        for subsection in ("#### 1. 永久拉黑", "#### 2. 一键查询",
+                           "#### 3. 解除指定", "#### 4. 清空指定端口",
+                           "#### 5. 验证与注意事项"):
+            self.assertIn(subsection, doc)
+        self.assertIn("[按端口查状态与日志](#port-log)", doc)
+        self.assertIn("[按端口删除](#node-manage)", doc)
+
     def test_hy2_protocol_stays_specific_not_vless(self):
         self.assertIn("UDP/443", self.hy2)
         self.assertIn("Hysteria", self.hy2)
