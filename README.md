@@ -15,7 +15,7 @@ HY2 主节点使用 UDP/QUIC 与正式 TLS。普通临时节点、WG-NAT 临时�
 | HY2 主节点、到期、临时节点配额及 IP 占用 | `hy2_audit.sh` |
 | 指定端口节点链接 | [按端口查链接](#node-link) |
 | 指定端口临时节点状态与日志 | [按端口查状态与日志](#port-log) |
-| Hysteria 核心版本（只读） | `hysteria version \| head -n 1` |
+| Hysteria 核心版本（只读） | `hysteria version \| grep '^Version:'` |
 | 下次配额重置日期与倒计时 | [查重置时间](#quota-reset-time) |
 | HY2 今天 / 某端口每日流量 | `hy2_traffic` / `hy2_traffic 40020` |
 | 全部端口限速 | `portbw report` |
@@ -724,7 +724,7 @@ SOCKS5 使用同一独立 [portbw](#portbw)，在落地机安装后对**本机**
 | 现象 | 先检查什么 | 后续动作 |
 |---|---|---|
 | `command not found` | 对应管理组件是否已安装、是否仅下载未运行安装 | 按[安装](#install)补齐模块，不重装全部节点 |
-| 不清楚当前核心版本 | `hysteria version \| head -n 1` | 此命令只读，无需升级核心 |
+| 不清楚当前核心版本 | `hysteria version \| grep '^Version:'` | 此命令只读，无需升级核心 |
 | 服务 active、但外部客户端不通 | A 记录、正式 TLS/SNI、云防火墙 UDP/443、配额、IP 槽位 | 从另一设备验证；先查服务日志和 UDP 监听 |
 | 只有某临时节点无法连接 | `hy2_audit.sh`、`pq_audit.sh 40020`、`hy2-guard status` | 先确认到期、来源限制、余额与黑名单 |
 | 配额到期却未重置 | [按端口查下一次重置](#quota-reset-time)、`pq-reset.timer` | 再查服务日志，不立即清零计费 |
@@ -742,7 +742,7 @@ SOCKS5 使用同一独立 [portbw](#portbw)，在落地机安装后对**本机**
 ```bash
 systemctl status hy2.service --no-pager
 TZ=Asia/Shanghai journalctl -u hy2.service -n 120 --no-pager
-hysteria version | head -n 1
+hysteria version | grep '^Version:'
 ```
 
 #### 临时节点、配额和管理规则
@@ -1192,8 +1192,10 @@ HYSTERIA_FORCE_UPDATE=1 HYSTERIA_VERSION=vX.Y.Z bash /root/onekey_hy2_main_tls.s
 **查看当前安装的 Hysteria 版本（只读，不会修改服务器）：**
 
 ```bash
-hysteria version | head -n 1
+hysteria version | grep '^Version:'
 ```
+
+Hysteria 的版本子命令会先输出一个以空行开头的 Logo，再输出 `Version:` 字段；**不要使用 `head -n 1`**，它只会读取空行。上面的 `grep` 精确提取版本行，不安装、不更新、也不重启服务。
 
 如果找不到该命令，先执行 `command -v hysteria` 检查安装状态，不要为了查询版本直接升级。
 

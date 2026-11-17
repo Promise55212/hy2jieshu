@@ -105,7 +105,10 @@ class ReadmeInstallLayout(unittest.TestCase):
         doc = DOC.read_text(encoding="utf-8")
         section = between(doc, '<a id="hy2-install"></a>',
                           '<a id="wg-nat"></a>')
-        self.assertIn("hysteria version | head -n 1", section)
+        self.assertIn("hysteria version | grep '^Version:'", section)
+        self.assertNotIn("hysteria version | head -n 1", doc)
+        self.assertNotIn("hysteria version \\| head -n 1", doc)
+        self.assertIn("Hysteria 的版本子命令会先输出一个以空行开头的 Logo", section)
         self.assertIn("HYSTERIA_FORCE_UPDATE=1 HYSTERIA_VERSION=", section)
         self.assertNotIn("/usr/local/bin/xray version", doc)
         code = (DOC.parent / "hy2.sh").read_text(encoding="utf-8")
