@@ -1,6 +1,9 @@
 """HY2 daily traffic: UDP counter reconciliation and reboot-safe baselines."""
+from contextlib import redirect_stdout
 import datetime as dt
 import importlib.util
+from io import StringIO
+import json
 from pathlib import Path
 import re
 import tempfile
@@ -111,6 +114,47 @@ class DailyTest(unittest.TestCase):
         tr.prune(state, {"hy2-temp-test": {"tag": "hy2-temp-test", "port": 40020,
                                            "key": "new-key"}}, dt.date(2026, 11, 4))
         self.assertEqual(state["users"], {})
+
+    def test_nat_display_name_keeps_existing_traffic_and_selectors(self):
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            self.setup_state(root)
+            now = dt.datetime.now(tr.TZ)
+            tag = "hy2-temp-test"
+            display_name = "hy2-nat-test"
+            fake = FakeNft()
+            tr.collect(root, fake, now)
+            state_file = root / "traffic/daily.json"
+            stored = tr.load_state(state_file)
+            day = now.date().isoformat()
+            stored["users"][tag]["days"][day]["upload"] = 123
+            tr.save_state(state_file, stored)
+
+            meta = root / "temp" / (tag + ".env")
+            with meta.open("a", encoding="utf-8") as stream:
+                stream.write("LANDING=nat\n")
+            # This ordinary node's short ID collides with the NAT display name.
+            (root / "temp/hy2-temp-hy2-nat-test.env").write_text(
+                "TAG=hy2-temp-hy2-nat-test\nPORT=40021\nPASSWORD=secret-C\n"
+                "CREATE_EPOCH=100\nEXPIRE_EPOCH=9999999999\nLANDING=local\n",
+                encoding="utf-8",
+            )
+            state = tr.collect(root, fake, now)
+            self.assertEqual(state["users"][tag]["key"], stored["users"][tag]["key"])
+            self.assertNotIn("display_name", tr.load_state(state_file)["users"][tag])
+
+            with mock.patch.object(tr, "print_traffic_table") as print_table, redirect_stdout(StringIO()):
+                tr.show(state)
+            names = {row[0] for row in print_table.call_args.args[0]}
+            self.assertEqual(names, {display_name, "hy2-temp-hy2-nat-test", "main"})
+
+            for selector in (display_name, tag, "test", "40020"):
+                with self.subTest(selector=selector), redirect_stdout(StringIO()) as output:
+                    tr.show(state, selector, as_json=True)
+                    records = json.loads(output.getvalue())["users"]
+                    self.assertEqual([record["tag"] for record in records], [tag])
+                    self.assertEqual(records[0]["days"][day]["upload"], 123)
+                    self.assertNotIn("display_name", records[0])
 
     def test_invalid_nft_counter_fail_closed(self):
         with self.assertRaises(ValueError):
