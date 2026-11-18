@@ -4625,6 +4625,10 @@ KEY="${certs[1]}"
 RAW_ID="${id:-$(date +%Y%m%d%H%M%S)-$(openssl rand -hex 2)}"
 SAFE_ID="$(hy2_safe_id "$RAW_ID")"
 TAG="$(hy2_temp_tag_from_id "$SAFE_ID")"
+DISPLAY_NAME="$TAG"
+if [[ "$LANDING" == "nat" ]]; then
+  DISPLAY_NAME="hy2-nat-${SAFE_ID}"
+fi
 META="$(hy2_temp_meta_file "$TAG")"
 CFG="$(hy2_temp_cfg_file "$TAG")"
 UNIT_FILE="$(hy2_temp_unit_file "$TAG")"
@@ -4707,7 +4711,7 @@ while (( ATTEMPT < MAX_START_RETRIES )); do
     LISTEN_VALUE="0.0.0.0:${PORT}"
   fi
   hy2_write_server_cfg "$CFG" "$LISTEN_VALUE" "$PASSWORD" "$CRT" "$KEY" "$MASQ_URL" "$ENABLE_SALAMANDER" "$SALAMANDER_PASSWORD" "$BIND_DEVICE" 4
-  HY2_URL="$(hy2_build_url "$PASSWORD" "$SERVER_ADDR" "$PORT" "$TAG" "$ENABLE_SALAMANDER" "$SALAMANDER_PASSWORD" "$HY_DOMAIN")"
+  HY2_URL="$(hy2_build_url "$PASSWORD" "$SERVER_ADDR" "$PORT" "$DISPLAY_NAME" "$ENABLE_SALAMANDER" "$SALAMANDER_PASSWORD" "$HY_DOMAIN")"
   URL_TMP="$(mktemp "${URL_FILE}.tmp.XXXXXX")"
   printf '%s\n' "$HY2_URL" >"$URL_TMP"
   chmod 600 "$URL_TMP"

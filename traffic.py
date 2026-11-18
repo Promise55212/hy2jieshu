@@ -26,7 +26,8 @@ SYSTEMD_RUNTIME = Path('/run/systemd/system')
 COMMON = Path('/usr/local/lib/hy2/common.sh')
 TABLE = 'hy2_daily_traffic'
 TZ = dt.timezone(dt.timedelta(hours=8), 'Asia/Shanghai')
-TAG_RE = re.compile(r'hy2-temp-[A-Za-z0-9._-]{1,96}')
+TAG_PREFIX = 'hy2-temp-'
+TAG_RE = re.compile(TAG_PREFIX + r'[A-Za-z0-9._-]{1,96}')
 COUNTER_RE = re.compile(r't_([0-9a-f]{32})_([0-9a-f]{16})_([ud])')
 
 
@@ -124,7 +125,10 @@ def discover(root, now):
             raise ValueError('HY2 创建时间非法：{}'.format(path))
         # Never store raw HY2 passwords in daily traffic history.
         identity = '{}|{}|{}|{}'.format(tag, port, credential, created)
-        nodes[tag] = {'tag': tag, 'port': port,
+        display_name = tag
+        if tag != 'main' and meta.get('LANDING') == 'nat':
+            display_name = 'hy2-nat-' + tag[len(TAG_PREFIX):]
+        nodes[tag] = {'tag': tag, 'port': port, 'display_name': display_name,
                       'key': hashlib.sha256(identity.encode()).hexdigest()[:32]}
     if len({node['port'] for node in nodes.values()}) != len(nodes):
         raise ValueError('多个 HY2 节点占用同一端口，停止统计防止错记')
@@ -260,7 +264,8 @@ def collect(root=STATE, backend=None, now=None):
     counters = counters_in(snapshot)
     selected = select_counters(nodes, state['users'], counters)
     for tag, node in nodes.items():
-        record = state['users'].setdefault(tag, dict(node, days={}, last={}))
+        record = state['users'].setdefault(
+            tag, dict(tag=tag, port=node['port'], key=node['key'], days={}, last={}))
         day = record['days'].setdefault(today.isoformat(), {'upload': 0, 'download': 0})
         for direction, column in [('u', 'upload'), ('d', 'download')]:
             name = selected[(tag, direction)]
@@ -278,6 +283,9 @@ def collect(root=STATE, backend=None, now=None):
     # resets live counters, and retrying after a crash cannot double-count.
     save_state(path, state)
     backend.apply(reconcile(nodes, selected, snapshot, counters))
+    # Presentation names come from live node metadata and stay out of daily.json.
+    for tag, record in state['users'].items():
+        record['display_name'] = nodes[tag]['display_name']
     return state
 
 
@@ -320,11 +328,17 @@ def print_traffic_table(rows):
 
 
 def show(state, selector=None, as_json=False):
-    records = [record for tag, record in sorted(state['users'].items())
-               if selector is None or selector in (tag, tag[len('hy2-temp-'):] if
-                   tag.startswith('hy2-temp-') else tag, str(record['port']))]
-    if selector is not None and not records:
-        raise ValueError('未找到有效节点：{}'.format(selector))
+    records = [record for _, record in sorted(state['users'].items())]
+    if selector is not None:
+        # An exact NAT display name takes priority over another node's short ID.
+        display_matches = [record for record in records
+                           if selector == record.get('display_name') and selector != record['tag']]
+        records = display_matches or [
+            record for record in records
+            if selector in (record['tag'], str(record['port'])) or
+            record['tag'] == TAG_PREFIX + selector]
+        if not records:
+            raise ValueError('未找到有效节点：{}'.format(selector))
     if as_json:
         # Raw byte counts for export; do not expose credentials or internal baselines.
         print(json.dumps({'timezone': 'Asia/Shanghai', 'users': [
@@ -343,7 +357,7 @@ def show(state, selector=None, as_json=False):
             if selector is None and day != today:
                 continue
             up, down = value['upload'], value['download']
-            rows.append([record['tag'], str(record['port']), day,
+            rows.append([record.get('display_name', record['tag']), str(record['port']), day,
                          human_bytes(up), human_bytes(down), human_bytes(up + down)])
     if rows:
         print_traffic_table(rows)
@@ -351,7 +365,7 @@ def show(state, selector=None, as_json=False):
         print('当前没有今日记录。' if selector is None else '当前没有可显示的每日记录。')
     print('UP=上传  DOWN=下载  TOTAL=当日合计（用户视角，自动换算单位）')
     if selector is None:
-        print('查看某用户最近 30 天明细：hy2_traffic <端口或节点ID>')
+        print('查看某用户最近 30 天明细：hy2_traffic <端口或节点名>')
 
 
 def install():
@@ -455,7 +469,7 @@ WantedBy=multi-user.target
 
 def main():
     parser = argparse.ArgumentParser(description='HY2 每日流量记录（北京时间，保留 30 天）')
-    parser.add_argument('selector', nargs='?', help='按端口、节点 ID、完整 TAG 或 main 查看 30 天明细；省略时查看所有用户今日用量')
+    parser.add_argument('selector', nargs='?', help='按端口、节点 ID、显示名称、完整 TAG 或 main 查看 30 天明细；省略时查看所有用户今日用量')
     parser.add_argument('--json', action='store_true', help='导出完整保留历史的每日字节数 JSON')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--collect', action='store_true', help='采集、轮换及清理，不显示列表')
