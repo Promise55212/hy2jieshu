@@ -93,6 +93,8 @@ class ReadmeContractTests(unittest.TestCase):
     def test_document_links_resolve_and_historical_status_is_scoped(self):
         for path in [README, *sorted((ROOT / "docs").glob("*.md"))]:
             doc = path.read_text(encoding="utf-8")
+            doc = re.sub(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?^ {0,3}\1[ \t]*(?:\n|$)",
+                         "", doc, flags=re.M | re.S)
             for target in re.findall(r"\]\(([^)]+)\)", doc):
                 if "://" in target or target.startswith("#"):
                     continue
