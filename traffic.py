@@ -126,7 +126,7 @@ def discover(root, now):
         # Never store raw HY2 passwords in daily traffic history.
         identity = '{}|{}|{}|{}'.format(tag, port, credential, created)
         display_name = tag
-        if tag != 'main' and meta.get('LANDING') == 'nat':
+        if tag != 'main' and meta.get('LANDING') == 'nat' and not tag.startswith(TAG_PREFIX + 'nat-'):
             display_name = 'hy2-nat-' + tag[len(TAG_PREFIX):]
         nodes[tag] = {'tag': tag, 'port': port, 'display_name': display_name,
                       'key': hashlib.sha256(identity.encode()).hexdigest()[:32]}

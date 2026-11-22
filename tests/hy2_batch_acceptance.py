@@ -25,7 +25,8 @@ STATE = Path("/var/lib/hy2")
 UNIT_DIR = Path("/etc/systemd/system")
 ROOT = Path("/root")
 NETS = ("198.51.100.7/32", "203.0.113.0/24")
-TAG_PATTERN = re.compile(r"^hy2-temp-batch-[0-9a-f]{8}$")
+TEST_TAG_PREFIX = "hy2-temp-nat-batch-"
+TAG_PATTERN = re.compile(r"hy2-temp-(?:nat-)?batch-([0-9a-f]{8})")
 PORT_PATTERN = re.compile(r"^[0-9]{1,5}$")
 RUNNER = "runner.py"
 
@@ -127,10 +128,10 @@ def meta_for_test(tag):
 
 
 def unit_names(tag):
-    if not valid_tag(tag):
+    match = TAG_PATTERN.fullmatch(tag)
+    if not match:
         raise TestFailure("invalid unit tag")
-    suffix = tag.removeprefix("hy2-temp-batch-")
-    return "hy2-batch-safety-" + suffix
+    return "hy2-batch-safety-" + match[1]
 
 
 def setup_safety_timer(tag, workdir):
@@ -422,6 +423,10 @@ def test_traffic(port, tag, workdir):
 
 
 def create_test_node(tag, workdir, duration=2678400, fixed_port=None):
+    if not valid_tag(tag):
+        raise TestFailure("refusing invalid tag")
+    # The explicit nat- prefix produces the same service tag with either
+    # the legacy creator or the creator that adds the prefix itself.
     suffix = tag.removeprefix("hy2-temp-")
     env = {**os.environ, "id": suffix, "IP_VERSION": "4",
            "IP_LIMIT": "1", "PQ_GIB": "0.02", "D": str(duration)}
@@ -490,7 +495,7 @@ def main(live):
             raise TestFailure("another HY2 batch acceptance is running") from exc
 
         key = secrets.token_hex(4)
-        tag = f"hy2-temp-batch-{key}"
+        tag = TEST_TAG_PREFIX + key
         workdir = ROOT / ("hy2-batch-accept-" + key)
         workdir.mkdir(mode=0o700)
         results = []
@@ -725,7 +730,7 @@ def maintenance():
         except BlockingIOError as exc:
             raise TestFailure("another batch is in progress") from exc
         key = secrets.token_hex(4)
-        tag = "hy2-temp-batch-" + key
+        tag = TEST_TAG_PREFIX + key
         workdir = ROOT / ("hy2-batch-accept-" + key)
         workdir.mkdir(mode=0o700)
         results = []
@@ -945,7 +950,7 @@ def edges():
         key = secrets.token_hex(4)
         # Each distinct tag gets its OWN persistent 30m safety timer. Do
         # not let a single untracked node survive after process termination.
-        tags = [f"hy2-temp-batch-{secrets.token_hex(4)}" for _ in range(3)]
+        tags = [TEST_TAG_PREFIX + secrets.token_hex(4) for _ in range(3)]
         if len(set(tags)) != 3:
             raise TestFailure("random test tag collision")
         workdir = ROOT / ("hy2-batch-accept-" + key)
@@ -1100,7 +1105,7 @@ def recovery():
         except BlockingIOError as exc:
             raise TestFailure("another HY2 batch acceptance is running") from exc
         key = secrets.token_hex(4)
-        tag = "hy2-temp-batch-" + key
+        tag = TEST_TAG_PREFIX + key
         workdir = ROOT / ("hy2-batch-accept-" + key)
         workdir.mkdir(mode=0o700)
         results = []

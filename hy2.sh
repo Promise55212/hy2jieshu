@@ -1172,7 +1172,7 @@ import unicodedata
 
 SCHEMAS = {
     "hy2": [
-        {"name": "NAME",  "min": 12, "ideal": 18, "max": 34, "align": "left",  "weight": 10},
+        {"name": "NAME",  "min": 13, "ideal": 22, "max": 34, "align": "left",  "weight": 10},
         {"name": "STATE", "min":  6, "ideal":  7, "max": 10, "align": "left",  "weight":  2},
         {"name": "PORT",  "min":  5, "ideal":  5, "max":  5, "align": "right", "weight":  1},
         {"name": "LISN",  "min":  4, "ideal":  4, "max":  4, "align": "left",  "weight":  1},
@@ -1318,17 +1318,30 @@ def allocate_widths(schema):
 
     return widths
 
+def hy2_display_name(name, landing):
+    kind = {"local": "tmp", "nat": "nat"}.get(landing)
+    prefix = "hy2-temp-"
+    if kind is None or not name.startswith(prefix):
+        return name
+    qualified = f"{prefix}{kind}-"
+    if name.startswith(qualified):
+        return name
+    return qualified + name[len(prefix):] + "*"
+
+
 def main():
     if len(sys.argv) != 2 or sys.argv[1] not in SCHEMAS:
         print("usage: render_table.py <hy2|pq>", file=sys.stderr)
         sys.exit(2)
 
-    schema = SCHEMAS[sys.argv[1]]
+    mode = sys.argv[1]
+    schema = SCHEMAS[mode]
     headers = [c["name"] for c in schema]
     aligns = [c["align"] for c in schema]
     widths = allocate_widths(schema)
 
     rows = []
+    has_legacy_names = False
     for raw in sys.stdin:
         raw = raw.rstrip("\n")
         if not raw:
@@ -1336,6 +1349,10 @@ def main():
         cols = raw.split("\t")
         if len(cols) < len(schema):
             cols += [""] * (len(schema) - len(cols))
+        if mode == "hy2":
+            name = hy2_display_name(cols[0], cols[5])
+            has_legacy_names |= name != cols[0]
+            cols[0] = name
         rows.append(cols[:len(schema)])
 
     if not rows:
@@ -1358,6 +1375,8 @@ def main():
             print(border("┣", "╋", "┫", widths))
 
     print(border("┗", "┻", "┛", widths))
+    if has_legacy_names:
+        print("* 旧节点显示名称，实际服务名保留。管理旧节点请按端口操作。")
 
 if __name__ == "__main__":
     main()
@@ -4624,11 +4643,13 @@ KEY="${certs[1]}"
 
 RAW_ID="${id:-$(date +%Y%m%d%H%M%S)-$(openssl rand -hex 2)}"
 SAFE_ID="$(hy2_safe_id "$RAW_ID")"
-TAG="$(hy2_temp_tag_from_id "$SAFE_ID")"
-DISPLAY_NAME="$TAG"
+TAG_KIND=tmp
 if [[ "$LANDING" == "nat" ]]; then
-  DISPLAY_NAME="hy2-nat-${SAFE_ID}"
+  TAG_KIND=nat
 fi
+TAG_ID="${TAG_KIND}-${SAFE_ID#"$TAG_KIND"-}"
+TAG="$(hy2_temp_tag_from_id "$TAG_ID")"
+DISPLAY_NAME="$TAG"
 META="$(hy2_temp_meta_file "$TAG")"
 CFG="$(hy2_temp_cfg_file "$TAG")"
 UNIT_FILE="$(hy2_temp_unit_file "$TAG")"

@@ -848,12 +848,14 @@ PORT=40020 bash -c 'set -Eeuo pipefail; [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && ((
 | 服务 / 定时器 | 作用 |
 |---|---|
 | `hy2.service` | 主节点；`systemctl restart hy2.service` 只重启主节点 |
-| `hy2-temp-节点名称.service` | 对应临时节点；完整名称以 `hy2_audit.sh` 为准 |
+| `hy2-temp-tmp-节点名称.service` / `hy2-temp-nat-节点名称.service` | 新建的普通 / WG-NAT 临时节点 |
 | `hy2-managed-restore.service` | 开机恢复受管理配额、IP 限制和节点保护 |
 | `hy2-managed-watchdog.timer` | 定期检查并恢复异常临时节点，失败保持阻断 |
 | `hy2-gc.timer` | 回收自然到期临时节点 |
 | `pq-save.timer` / `pq-reset.timer` | 定期保存已用量 / 检查到期的 30 天周期 |
 | `hy2-managed-shutdown-save.service` | 正常关机前保存受管理配额 |
+
+`hy2_audit.sh` 按实际出口显示普通节点的 `hy2-temp-tmp-` 和 NAT 节点的 `hy2-temp-nat-` 前缀。名称末尾带 `*` 的旧节点保留原来的实际服务名，管理时可按端口查找。新节点的分享名称与服务名去掉 `.service` 后一致。
 
 ```bash
 systemctl list-timers --all hy2-managed-watchdog.timer hy2-gc.timer pq-save.timer pq-reset.timer

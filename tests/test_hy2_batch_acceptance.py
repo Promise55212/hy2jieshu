@@ -18,6 +18,9 @@ spec.loader.exec_module(batch)
 class PureContractTests(unittest.TestCase):
     def test_tag_port_strict_isolation(self):
         self.assertTrue(batch.valid_tag("hy2-temp-batch-0123abcd"))
+        self.assertTrue(batch.valid_tag("hy2-temp-nat-batch-0123abcd"))
+        self.assertFalse(batch.valid_tag("hy2-temp-tmp-batch-0123abcd"))
+        self.assertFalse(batch.valid_tag("hy2-temp-nat-batch-0123abcd/../main"))
         self.assertFalse(batch.valid_tag("hy2-temp-guardcheck"))
         self.assertFalse(batch.valid_tag("hy2-temp-batch-0123abcd/../main"))
         self.assertFalse(batch.valid_tag("hy2-temp-batch-0123abce\n"))
@@ -61,21 +64,22 @@ class PureContractTests(unittest.TestCase):
         self.assertFalse(batch.status_has_port("PAUSED:", "40000", status))
 
     def test_persistent_failsafe_unit_syntax_contract(self):
-        tag = "hy2-temp-batch-aabbccdd"
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(batch, "UNIT_DIR", Path(tmp)), \
-                 mock.patch.object(batch, "run_systemctl"), \
-                 mock.patch.object(batch, "active", return_value=True):
-                batch.setup_safety_timer(tag, Path(tmp))
-                name = batch.unit_names(tag)
-                timer = (Path(tmp) / (name + ".timer")).read_text()
-                service = (Path(tmp) / (name + ".service")).read_text()
-                self.assertIn("OnCalendar=", timer)
-                self.assertIn("Persistent=true", timer)
-                self.assertIn("WantedBy=timers.target", timer)
-                self.assertIn(f"--cleanup {tag}", service)
-                self.assertNotIn("reboot", service.lower())
-                self.assertNotIn("wg-quick", service)
+        for tag in ("hy2-temp-batch-aabbccdd", "hy2-temp-nat-batch-aabbccdd"):
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.object(batch, "UNIT_DIR", Path(tmp)), \
+                     mock.patch.object(batch, "run_systemctl"), \
+                     mock.patch.object(batch, "active", return_value=True):
+                    batch.setup_safety_timer(tag, Path(tmp))
+                    name = batch.unit_names(tag)
+                    self.assertEqual(name, "hy2-batch-safety-aabbccdd")
+                    timer = (Path(tmp) / (name + ".timer")).read_text()
+                    service = (Path(tmp) / (name + ".service")).read_text()
+                    self.assertIn("OnCalendar=", timer)
+                    self.assertIn("Persistent=true", timer)
+                    self.assertIn("WantedBy=timers.target", timer)
+                    self.assertIn(f"--cleanup {tag}", service)
+                    self.assertNotIn("reboot", service.lower())
+                    self.assertNotIn("wg-quick", service)
 
     def test_real_client_addresses_never_used_for_ban(self):
         for network in batch.NETS:
@@ -142,7 +146,7 @@ class PureContractTests(unittest.TestCase):
 
 
     def test_fixed_port_allocator_is_restricted_to_our_candidate(self):
-        tag = "hy2-temp-batch-a1b2c3d4"
+        tag = batch.TEST_TAG_PREFIX + "a1b2c3d4"
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(batch, "command") as cmd, \
                  mock.patch.object(batch, "meta_for_test",
@@ -151,10 +155,17 @@ class PureContractTests(unittest.TestCase):
                 self.assertEqual(batch.create_test_node(tag, Path(tmp),
                                  duration=1200, fixed_port="40000"), "40000")
                 env = cmd.call_args.kwargs["env"]
+                self.assertEqual(env["id"], "nat-batch-a1b2c3d4")
                 self.assertEqual(env["PORT_START"], "40000")
                 self.assertEqual(env["PORT_END"], "40000")
             with self.assertRaisesRegex(batch.TestFailure, "unsafe test port"):
                 batch.create_test_node(tag, Path(tmp), fixed_port="443")
+
+    def test_create_refuses_an_unowned_tag_before_running_the_native_script(self):
+        with mock.patch.object(batch, "command") as cmd:
+            with self.assertRaisesRegex(batch.TestFailure, "invalid tag"):
+                batch.create_test_node("hy2-temp-tmp-batch-a1b2c3d4", Path("/tmp"))
+            cmd.assert_not_called()
 
     def test_freed_port_rejects_leftover_nft_objects(self):
         tag = "hy2-temp-batch-a1b2c3d4"
