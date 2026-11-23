@@ -10,7 +10,7 @@
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/tests/hy2_batch_acceptance.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/tests/hy2_batch_acceptance.py \
   -o /root/hy2_batch_acceptance.py && \
 python3 -m py_compile /root/hy2_batch_acceptance.py && \
 python3 /root/hy2_batch_acceptance.py --live
@@ -31,7 +31,7 @@ python3 /root/hy2_batch_acceptance.py --live
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/tests/hy2_batch_acceptance.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/tests/hy2_batch_acceptance.py \
   -o /root/hy2_batch_acceptance.py && \
 python3 -m py_compile /root/hy2_batch_acceptance.py && \
 python3 /root/hy2_batch_acceptance.py --maintenance
@@ -51,7 +51,7 @@ python3 /root/hy2_batch_acceptance.py --maintenance
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/tests/hy2_batch_acceptance.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/tests/hy2_batch_acceptance.py \
   -o /root/hy2_batch_acceptance.py && \
 python3 -m py_compile /root/hy2_batch_acceptance.py && \
 python3 /root/hy2_batch_acceptance.py --edges
@@ -67,7 +67,7 @@ python3 /root/hy2_batch_acceptance.py --edges
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/tests/hy2_release_gate.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/tests/hy2_release_gate.py \
   -o /root/hy2_release_gate.py && \
 python3 -m py_compile /root/hy2_release_gate.py && \
 python3 /root/hy2_release_gate.py
@@ -84,7 +84,7 @@ python3 /root/hy2_release_gate.py
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/tests/hy2_batch_acceptance.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/tests/hy2_batch_acceptance.py \
   -o /root/hy2_batch_acceptance.py && \
 python3 -m py_compile /root/hy2_batch_acceptance.py && \
 python3 /root/hy2_batch_acceptance.py --recovery

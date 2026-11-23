@@ -531,7 +531,7 @@ pq_audit.sh 40020
 如果你还没有重新运行新版 `hy2.sh` 管理器，也可**只下载独立命令**，避免重装 WG 或修改运行中的 HY2：
 
 ```bash
-curl -fL https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/pq_keepcycle.sh -o /root/pq_keepcycle.sh
+curl -fL https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/pq_keepcycle.sh -o /root/pq_keepcycle.sh
 bash -n /root/pq_keepcycle.sh
 bash /root/pq_keepcycle.sh 40020 0.48828125
 ```
@@ -894,7 +894,7 @@ journalctl -u hy2.service -n 50 --no-pager
 
 ```bash
 curl -fL --retry 3 \
-  'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2-guard.py' \
+  'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/hy2-guard.py' \
   -o /root/hy2-guard.py &&
 python3 -m py_compile /root/hy2-guard.py &&
 python3 /root/hy2-guard.py install &&
@@ -1057,7 +1057,7 @@ socks5 del 41004
 在 HY2 VPS 执行。先下载并查看帮助、预览操作范围：
 
 ```bash
-curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2-uninstall.sh -o /root/hy2-uninstall.sh
+curl -fsSL --retry 3 https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/hy2-uninstall.sh -o /root/hy2-uninstall.sh
 chmod 700 /root/hy2-uninstall.sh
 bash -n /root/hy2-uninstall.sh && bash /root/hy2-uninstall.sh
 ```
@@ -1147,7 +1147,7 @@ apt-get update && apt-get install -y curl ca-certificates nano iproute2
 依赖安装成功后，下载并安装管理工具（修改系统）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2.sh' -o /root/hy2.sh && chmod 700 /root/hy2.sh && bash -n /root/hy2.sh && bash /root/hy2.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/hy2.sh' -o /root/hy2.sh && chmod 700 /root/hy2.sh && bash -n /root/hy2.sh && bash /root/hy2.sh
 ```
 
 本步骤生成 `/etc/default/hy2-main`、`/root/onekey_hy2_main_tls.sh`、临时节点管理器、配额和 IP 限制、看门狗、恢复任务以及对应 systemd 单元。**安装管理器本身还不会自动创建可连接的 HY2 主节点。**
@@ -1275,7 +1275,7 @@ WG-NAT 让 HY2 VPS 上指定的临时节点通过独立 NAT 机器的公网 IPv4
 
 ```bash
 apt-get update && apt-get install -y curl ca-certificates
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/nat.sh' -o /root/nat.sh && chmod 700 /root/nat.sh && bash -n /root/nat.sh && bash /root/nat.sh init
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/nat.sh' -o /root/nat.sh && chmod 700 /root/nat.sh && bash -n /root/nat.sh && bash /root/nat.sh init
 ```
 
 无法自动识别 WAN 网卡时，仅在全新 NAT 出口机按实际名称指定 `WAN_IF=实际网卡`；不要用新装步骤修改已经稳定运行的 NAT 出口机。
@@ -1285,7 +1285,7 @@ curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu
 在**新 HY2 VPS** 执行（下载并部署 VPS 端 WireGuard）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/vpswg.sh' -o /root/vpswg.sh && chmod 700 /root/vpswg.sh && bash -n /root/vpswg.sh && bash /root/vpswg.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/vpswg.sh' -o /root/vpswg.sh && chmod 700 /root/vpswg.sh && bash -n /root/vpswg.sh && bash /root/vpswg.sh
 ```
 
 脚本会生成**新 VPS 专属**的 WireGuard 公钥。以后需要查询时，在该 HY2 VPS 执行：
@@ -1339,7 +1339,7 @@ cat /etc/wireguard/wg-exit.pub
 在**新 HY2 VPS** 执行（只更新 VPS 端模块，不动 NAT 机）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/natjichang.sh' -o /root/natjichang.sh && chmod 700 /root/natjichang.sh && bash -n /root/natjichang.sh && bash /root/natjichang.sh
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/natjichang.sh' -o /root/natjichang.sh && chmod 700 /root/natjichang.sh && bash -n /root/natjichang.sh && bash /root/natjichang.sh
 ```
 
 检查新 VPS 的 WG-NAT 准备情况：
@@ -1408,7 +1408,7 @@ bash /root/nat.sh probe-status hy2
 在 HY2 VPS 下载并安装统计组件（首次安装和后续更新使用同一命令）：
 
 ```bash
-curl -fsSL --retry 3 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/traffic.py' -o /root/hy2_traffic.py && python3 -m py_compile /root/hy2_traffic.py && python3 /root/hy2_traffic.py --install
+curl -fsSL --retry 3 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/traffic.py' -o /root/hy2_traffic.py && python3 -m py_compile /root/hy2_traffic.py && python3 /root/hy2_traffic.py --install
 ```
 
 安装器会管理 `hy2-traffic.timer`、`hy2-traffic.service` 及 `hy2-traffic-shutdown.service`。旧的历史数据应当保留；不需要执行 `hy2.sh` 重装，也不会更改 `pq-save.timer`。
@@ -1445,8 +1445,8 @@ apt-get update && apt-get install -y curl ca-certificates python3 iproute2 nftab
 依赖安装成功后，下载两个配套文件；以下命令仅下载，不安装、不创建限速策略：
 
 ```bash
-curl -fsSL 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw-install.sh' -o /root/portbw-install.sh && \
-curl -fsSL 'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw.py' -o /root/portbw.py
+curl -fsSL 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/portbw-install.sh' -o /root/portbw-install.sh && \
+curl -fsSL 'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/portbw.py' -o /root/portbw.py
 ```
 
 两次下载均成功后再继续。已有 portbw 的主机应看下面的升级说明，不要执行新安装流程。
@@ -1536,10 +1536,10 @@ apt-get update && apt-get install -y curl ca-certificates
 
 ```bash
 install -d -m 700 /root/socks5-release && \
-curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5-install.sh -o /root/socks5-release/socks5-install.sh && \
-curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5.py -o /root/socks5-release/socks5.py && \
-curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5-traffic.py -o /root/socks5-release/socks5-traffic.py && \
-curl -fsSL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/socks5-audit.py -o /root/socks5-release/socks5-audit.py
+curl -fsSL --retry 3 https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/socks5-install.sh -o /root/socks5-release/socks5-install.sh && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/socks5.py -o /root/socks5-release/socks5.py && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/socks5-traffic.py -o /root/socks5-release/socks5-traffic.py && \
+curl -fsSL --retry 3 https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/socks5-audit.py -o /root/socks5-release/socks5-audit.py
 ```
 
 ### 2. 首次安装 / 已安装版本更新
@@ -1591,7 +1591,7 @@ socks5 status
 
 ```bash
 curl -fsSL --retry 3 \
-  'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2.sh' \
+  'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/hy2.sh' \
   -o /root/hy2.sh && \
 chmod 700 /root/hy2.sh && \
 bash -n /root/hy2.sh && bash /root/hy2.sh
@@ -1603,7 +1603,7 @@ bash -n /root/hy2.sh && bash /root/hy2.sh
 
 ```bash
 curl -fsSL --retry 3 \
-  'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/traffic.py' \
+  'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/traffic.py' \
   -o /root/hy2_traffic.py && \
 python3 -m py_compile /root/hy2_traffic.py && \
 python3 /root/hy2_traffic.py --install
@@ -1618,13 +1618,13 @@ hy2_traffic
 
 ```bash
 curl -fsSL --retry 3 \
-  'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/vpswg.sh' \
+  'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/vpswg.sh' \
   -o /root/vpswg.sh && \
 chmod 700 /root/vpswg.sh && \
 bash -n /root/vpswg.sh && bash /root/vpswg.sh
 
 curl -fsSL --retry 3 \
-  'https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/natjichang.sh' \
+  'https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/natjichang.sh' \
   -o /root/natjichang.sh && \
 chmod 700 /root/natjichang.sh && \
 bash -n /root/natjichang.sh && bash /root/natjichang.sh
@@ -1682,7 +1682,7 @@ iptables-save > "/root/wg-backups/iptables-${BACKUP_TS}.rules"
 在 HY2 VPS 以 root 安装只读命令；**不会重启 Hysteria、修改服务配置或启动后台采集器**：
 
 ```bash
-curl -fL --retry 3 https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2-abuse.py -o /root/hy2-abuse.py
+curl -fL --retry 3 https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/hy2-abuse.py -o /root/hy2-abuse.py
 python3 -m py_compile /root/hy2-abuse.py
 install -m 755 /root/hy2-abuse.py /usr/local/sbin/hy2-abuse
 PORT=40020 DAYS=7 hy2-abuse

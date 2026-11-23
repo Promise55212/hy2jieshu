@@ -77,12 +77,13 @@ class ReadmeContractTests(unittest.TestCase):
             doc = path.read_text(encoding="utf-8")
             with self.subTest(path=path.name):
                 self.assertNotIn("liucong552-art/ceshi", doc)
-            for owner, name in re.findall(
-                r"https://raw\.githubusercontent\.com/liucong552-art/"
+            for owner, repo, name in re.findall(
+                r"https://raw\.githubusercontent\.com/(liucong552-art|Promise55212)/"
                 r"([^/]+)/main/([A-Za-z0-9_./-]+)", doc
             ):
                 with self.subTest(path=path.name, download=name):
-                    self.assertEqual(owner, "hy2jieshu")
+                    self.assertEqual(owner, "Promise55212")
+                    self.assertEqual(repo, "hy2jieshu")
                     self.assertTrue((ROOT / name).is_file(), name)
                     downloads.append(name)
         for name in ("hy2.sh", "hy2-uninstall.sh", "traffic.py",

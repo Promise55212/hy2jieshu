@@ -17,7 +17,7 @@
 ```bash
 apt-get update && apt-get install -y curl ca-certificates iproute2
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/scripts/hy2_fresh_preflight.sh \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/scripts/hy2_fresh_preflight.sh \
   -o /root/hy2_fresh_preflight.sh
 bash -n /root/hy2_fresh_preflight.sh && bash /root/hy2_fresh_preflight.sh before
 ```
@@ -28,7 +28,7 @@ bash -n /root/hy2_fresh_preflight.sh && bash /root/hy2_fresh_preflight.sh before
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/hy2.sh \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/hy2.sh \
   -o /root/hy2.sh
 chmod 700 /root/hy2.sh
 bash -n /root/hy2.sh && bash /root/hy2.sh install
@@ -63,7 +63,7 @@ hy2_doctor.sh --strict
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/vpswg.sh \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/vpswg.sh \
   -o /root/vpswg.sh
 chmod 700 /root/vpswg.sh
 bash -n /root/vpswg.sh && bash /root/vpswg.sh
@@ -85,7 +85,7 @@ bash /root/nat.sh list
 ```bash
 /usr/local/sbin/wg_nat_healthcheck.sh
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/natjichang.sh \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/natjichang.sh \
   -o /root/natjichang.sh
 chmod 700 /root/natjichang.sh
 bash -n /root/natjichang.sh && bash /root/natjichang.sh
@@ -105,10 +105,10 @@ bash /root/hy2_fresh_preflight.sh wg
 ```bash
 apt-get update && apt-get install -y curl ca-certificates python3 iproute2 nftables util-linux coreutils procps
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw-install.sh \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/portbw-install.sh \
   -o /root/portbw-install.sh
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/portbw.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/portbw.py \
   -o /root/portbw.py
 bash -n /root/portbw-install.sh
 bash /root/portbw-install.sh check &&
@@ -123,7 +123,7 @@ portbw audit
 
 ```bash
 curl -fsSL --retry 3 \
-  https://raw.githubusercontent.com/liucong552-art/hy2jieshu/main/traffic.py \
+  https://raw.githubusercontent.com/Promise55212/hy2jieshu/main/traffic.py \
   -o /root/hy2_traffic.py
 python3 -m py_compile /root/hy2_traffic.py &&
 python3 /root/hy2_traffic.py --install

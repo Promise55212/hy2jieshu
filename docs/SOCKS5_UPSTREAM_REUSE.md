@@ -11,7 +11,7 @@
 | `socks5-audit.py` | `3c6e1bb357959e12d04c9adf2ba0a99f51ca349c4b812f8b6981259843acf7c8` |
 | `tests/test_socks5_access_audit.py` | `bb6f6d331c2770aaeaa30ecb2f5d8778cb29da37d2c90196bb4d76cfa1f5b980` |
 
-机器可读记录见 [SHA / Git Blob 清单](../tests/SOCKS5_UPSTREAM_MANIFEST.json)。安装器内置的 core、traffic、audit 三个 SHA 与复制文件一致。
+表中哈希记录原始上游文件，见 [SHA / Git Blob 清单](../tests/SOCKS5_UPSTREAM_MANIFEST.json)。仓库迁移到 Promise55212 后，安装器和相应测试中的下载地址改为同账户的 jieshu。完整性检查先还原这一个地址，再核对原始哈希。安装器内置的 core、traffic、audit 三个 SHA 与下载文件一致。
 
 ## 配套条件
 
@@ -19,7 +19,7 @@
 - Python 3 标准库，无 pip 依赖；访问审计需要 journald/journalctl 及 `Asia/Shanghai` 时区数据。日志查询窗口不等于系统实际保留时长。
 - 依赖命令为 `3proxy python3 nft ip ss timeout systemctl flock`；下载/依赖引导另需 curl、CA 和 gnupg。原安装器包清单为 `ca-certificates curl gnupg python3 nftables iproute2 util-linux coreutils procps`。
 - 3proxy 优先使用已安装程序或发行版软件包，否则原安装器使用 `https://3proxy.org/repo/deb`，校验签名公钥指纹 `FC12214499FCC7BA1CFF6CDC0312384E3A73940B`。
-- 四文件同目录下载时，原安装器读取本地配套模块。缺少任一模块才从原 `jieshu/$S5_SOURCE_REF` 下载，默认 main，另允许原审计分支；此来源与 SHA 校验均保持原样。
+- 四文件同目录下载时，安装器读取本地配套模块。缺少任一模块时从 `Promise55212/jieshu` 下载，默认使用 `main`，也可通过 `S5_SOURCE_REF` 指定 `feature/socks5-access-audit`。两个分支的三个配套文件都通过了安装器的 SHA256 校验。
 - SOCKS5 为 IPv4 TCP CONNECT，原实现拒绝 UDP ASSOCIATE/BIND；状态、锁、规则和服务使用独立 `socks5-manager` / `s5m_*` 命名空间。portbw 是独立可选组件，不是安装硬依赖；SOCKS5 账号生命周期不自动改动其策略。
 - 可选 Cloudflare DDNS 需另外配置 zone、record 和 root 私有 Token 文件。本次不配置、不复制任何真实 Token 或用户数据。
 
